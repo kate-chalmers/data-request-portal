@@ -1,0 +1,8 @@
+.card-grow {
+  transition: all .2s ease-in-out;
+}
+
+.card-grow:hover {
+  transform: scale(1.1);
+  cursor: pointer;
+}
