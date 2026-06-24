@@ -153,13 +153,13 @@ ui <- navbarPage("Data request",
                               column(1),
                               column(10,
                                      h3("Time Use Survey Tables"),
-                                     p("Enter data directly in the cells below. Column names can be renamed in global.R.",
+                                     p("For table 1 and 2 below, please provide supplemental data and information for your national time use surveys.",
                                        style = "color:#888;font-size:13px;"),
                                      br(),
-                                     h4("Table 1 — [Title to be defined]  (32 \u00d7 5)"),
+                                     h4("Table 1. Time spent on daily activities (minutes)"),
                                      uiOutput("time_use_table1_ui"),
                                      br(), br(),
-                                     h4("Table 2 — [Title to be defined]  (29 \u00d7 3)"),
+                                     h4("Table 2. Considering the activity coding list in the national time-use survey, please indicate which activity codes are grouped under each activity (e.g. 1.1. paid work)."),
                                      uiOutput("time_use_table2_ui")
                               ),
                               column(1)
@@ -343,12 +343,12 @@ server <- function(input, output, session) {
   
   # ── Time Use tables ─────────────────────────────────────────────────────────
   output$time_use_table1_ui <- renderUI({
-    HTML(make_time_use_table(32, time_use_col_names_1, 2, "tu_table1",
+    HTML(make_time_use_table(31, time_use_col_names_1, 2, "tu_table1",
                               row_text = time_use_row_text_1,
                               saved    = session_data$time_use_1))
   })
   output$time_use_table2_ui <- renderUI({
-    HTML(make_time_use_table(29, time_use_col_names_2, 2, "tu_table2",
+    HTML(make_time_use_table(30, time_use_col_names_2, 2, "tu_table2",
                               row_text = time_use_row_text_2,
                               saved    = session_data$time_use_2))
   })
@@ -387,6 +387,25 @@ server <- function(input, output, session) {
         )
       )
     
+    # Icon filenames for each dimension group
+    group_icons <- c(
+      "Income and wealth"     = "income and wealth.png",
+      "Work and job quality"  = "work and job quality.png",
+      "Housing"               = "housing.png",
+      "Work-life balance"     = "worklife balance.png",
+      "Health"                = "health.png",
+      "Knowledge and skills"  = "knowledge and skills.png",
+      "Social connections"    = "social connections.png",
+      "Civic engagement"      = "civic engagement.png",
+      "Environmental quality" = "environmental quality.png",
+      "Safety"                = "safety.png",
+      "Subjective well-being" = "subjective wellbeing.png",
+      "Natural capital"       = "natural capital.png",
+      "Human capital"         = "human capital.png",
+      "Social capital"        = "social capital.png",
+      "Economic capital"      = "economic capital.png"
+    )
+
     # Build the year axis row once — sits above all groups
     label_every <- c(2004, 2008, 2012, 2016, 2020, 2024, 2026)
     
@@ -565,15 +584,19 @@ server <- function(input, output, session) {
       slice(1) %>%
       ungroup() %>%
       merge(dict %>% select(measure, label, question)) %>%
+      left_join(defs_lookup, by = "measure") %>%
       arrange(cat) %>%
       mutate(
-        needs_input   = measure %in% xlsx_measures,
-        is_time_use   = measure %in% time_use_measures,
-        safe_id       = gsub("\\.", "_", measure),
-        year_inputs   = unlist(year_inputs_lookup[measure]),
-        year_chart    = unlist(year_charts_lookup[measure]),
-        oecd_q_html   = sapply(measure, function(m) response_html_lookup[[m]]$oecd),
+        needs_input    = measure %in% xlsx_measures,
+        is_time_use    = measure %in% time_use_measures,
+        safe_id        = gsub("\\.", "_", measure),
+        year_inputs    = unlist(year_inputs_lookup[measure]),
+        year_chart     = unlist(year_charts_lookup[measure]),
+        oecd_q_html    = sapply(measure, function(m) response_html_lookup[[m]]$oecd),
         country_q_html = sapply(measure, function(m) response_html_lookup[[m]]$country),
+        def_text       = replace_na(definition, "Definition to be added."),
+        tech_name      = replace_na(indicator,  "—"),
+        unit_text      = replace_na(unit,       "—"),
         
         # Per-type row styling
         row_border  = case_when(
@@ -598,7 +621,7 @@ server <- function(input, output, session) {
         ),
         
         # 3-way panel body built row-by-row via mapply
-        panel_body = mapply(function(ni, itu, sid, mn, yi, yc, q, oqh, cqh) {
+        panel_body = mapply(function(ni, itu, sid, mn, yi, yc, q, oqh, cqh, def, tech, unt, lbl) {
           if (ni) {
             # ── xlsx: two-column question layout + editable inputs ────────────
             paste0(
@@ -632,16 +655,18 @@ server <- function(input, output, session) {
               "</div>"
             )
           } else {
-            # ── read-only: metadata + echarts4r chart + note ─────────────────
+            # ── read-only: metadata + echart + note ──────────────────────────
             paste0(
-              "<div style='width:100%;'>",
+              "<div style='width:100%;text-align:left;'>",
+              "<span style='font-size:13px;color:#555;'>", lbl, "</span></div>",
+              "<div><span style='font-size:11px;font-weight:600;'>Technical name: </span>",
+              "<span style='font-size:13px;color:#555;'>", tech, "</span></div>",
+              "<div><span style='font-size:11px;font-weight:600;'>Unit: </span>",
+              "<span style='font-size:13px;color:#555;'>", unt, "</span></div>",
               "<strong style='font-size:13px;'>Definition</strong>",
-              "<p style='font-size:12px;color:#aaa;margin-top:4px;font-style:italic;'>Definition to be added.</p>",
-              "<div style='display:flex;flex-direction:row;gap:32px;margin-top:8px;flex-wrap:wrap;'>",
-              "<div><span style='font-size:11px;font-weight:600;'>Technical name</span><p style='font-size:11px;color:#aaa;margin:2px 0 0;'>&#8212;</p></div>",
-              "<div><span style='font-size:11px;font-weight:600;'>Unit</span><p style='font-size:11px;color:#aaa;margin:2px 0 0;'>&#8212;</p></div>",
-              "<div><span style='font-size:11px;font-weight:600;'>Source</span><p style='font-size:11px;color:#aaa;margin:2px 0 0;'>&#8212;</p></div>",
-              "<div><span style='font-size:11px;font-weight:600;'>Similar indicators</span><p style='font-size:11px;color:#aaa;margin:2px 0 0;'>&#8212;</p></div>",
+              "<p style='font-size:12px;color:#333;margin-top:4px;'>", def, "</p>",
+              "<div style='margin-top:10px;display:flex;flex-direction:column;gap:5px;'>",
+              "<div><span style='font-size:11px;font-weight:600;'>Label: </span>",
               "</div></div>",
               "<hr style='margin:4px 0;border:none;border-top:1px solid #ddd;'/>",
               "<div style='width:100%;'><strong style='font-size:13px;'>Time Series</strong>",
@@ -661,7 +686,7 @@ server <- function(input, output, session) {
             )
           }
         }, needs_input, is_time_use, safe_id, measure, year_inputs, year_chart, question,
-        oecd_q_html, country_q_html,
+        oecd_q_html, country_q_html, def_text, tech_name, unit_text, label,
         SIMPLIFY = TRUE, USE.NAMES = FALSE),
         
         row_html = paste0(
@@ -682,7 +707,15 @@ server <- function(input, output, session) {
       group_by(cat, group) %>%
       summarise(
         group_html = paste(
-          paste0("<h4 style='margin:12px 0 4px 0;text-align:left;'>", unique(group), "</h4>"),
+          {
+            grp      <- unique(group)
+            icon_src <- group_icons[grp]
+            icon_tag <- if (!is.na(icon_src))
+              paste0("<img src='", icon_src, "' style='height:22px;width:22px;margin-right:7px;vertical-align:middle;object-fit:contain;'/>")
+            else ""
+            paste0("<h4 style='margin:16px 0 4px 0;text-align:left;display:flex;align-items:center;'>",
+                   icon_tag, grp, "</h4>")
+          },
           paste(row_html, collapse = ""),
           axis_row,   # <-- now appended after each group's rows
           collapse = ""

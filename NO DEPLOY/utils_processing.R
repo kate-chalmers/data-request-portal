@@ -2,7 +2,7 @@
 timeSeriesAverage <- function(full_df, dimension_name) {
   
   # dimension_name <- "_T"
-  # full_df <- tidy_dat
+  # full_df <- dat
   
   full_df <- full_df %>% filter(ref_area %in% oecd_countries)
   

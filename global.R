@@ -24,11 +24,16 @@ country_name_vector <- setNames(oecd_countries, oecd_names)
 dict <- readxl::read_excel("data/dictionary.xlsx") %>%
   mutate(question = NA)
 
+defs_lookup <- readxl::read_excel("data/definitions.xlsx") %>%
+  filter(!grepl("_DEP$|_VER$", measure)) %>%
+  select(measure, definition, indicator, unit)
+
 xlsx_response_format <- readRDS("./data/response_input.RDS")
 
-
-measure_list <- dict %>% distinct(measure) %>% filter(!grepl("_DEP", measure), !grepl("_VER", measure))
-
+measure_list <- dict %>% 
+  distinct(measure) %>% 
+  filter(!grepl("_DEP", measure), !grepl("_VER", measure),
+          !grepl("11_3_", measure)) 
 
 dat <- readRDS("./data/final dataset.RDS") %>%
   filter(ref_area == "AUS", sex == "_T", age == "_T", education_lev == "_T",
@@ -50,10 +55,6 @@ time_use_measures <- c("4_1", "4_2", "4_3", "7_2")
 # all_rows             : nine rows  — Country avg + M/F + age + education
 # Unassigned measures fall back to country_average_only.
 
-country_average_only <- xlsx_measures   # default: move measures to the right bucket below
-gender_only          <- character(0)    # TODO: assign measures with gender breakdown
-all_rows             <- character(0)    # TODO: assign measures with full breakdown
-
 country_average_only <- c("1_5", "3_5", "4_2", "9_1")
 gender_only <- c("4_3")
 all_rows <- c("4_1", "5_4", "5_5", "7_2", "7_4", "8_2", "14_1", "14_2")
@@ -65,22 +66,42 @@ all_rows_dep_vert <- c("2_9", "4_4", "7_3", "11_1")
 # Cols 1-2 are free text; remaining cols are numeric.
 
 time_use_col_names_1 <- c("Code", "Population (Total / Women / Men)", "Total\n(15-64 years old)", "Men\n(15-64 years old)", "Women\n(15-64 years old)")  # TODO: rename
-time_use_col_names_2 <- c("Code", "Paid work or study", "")                     # TODO: rename
+time_use_col_names_2 <- c("Code", "Activity", "")                     
+
+table_1_col_1 <- c(
+  "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", 
+  "2.0", "2.1", "2.2", "2.3", "2.3.1", "2.3.2", "2.4", "2.5", "2.6", "2.7", 
+  "3.0", "3.1", "3.2", "3.3", 
+  "4.0", "4.1", "4.2", "4.3", "4.4", "4.5", 
+  "5.0", "5.1", "5.2", 
+  "T"
+)
+
+table_1_col_2 %>% length()
+
+table_1_col_2 <- c(
+  "Paid work or study", "Paid work (all jobs)", "Travel to and from work/study", "Time in school or classes", "Research/homework", "Job search", "Other paid work or study-related",
+  "Unpaid work", "Routine housework", "Shopping", "Care for household members", "Child care", "Adult care", "Care for non household members", "Volunteering", "Travel related to household activities", "Other unpaid",
+  "Personal care", "Sleeping", "Eating & drinking", "Personal, household, and medical services + travel related to personal care",
+  "Leisure", "Sports", "Participating / attending events", "Visiting or entertaining friends", "TV or radio at home", "Other leisure activities",
+  "Other", "Religious / spiritual activities and civic obligations", "Other (no categories)",
+  "Total"
+)
 
 # Fixed text for the first two (static) columns of each Time Use table.
 # Edit values directly here — these display as read-only text in the app.
 time_use_row_text_1 <- data.frame(
-  Col_1 = rep("", 32),   # TODO: fill in row labels (e.g. activity codes)
-  Col_2 = rep("", 32),   # TODO: fill in row descriptions
+  Col_1 = table_1_col_1,   
+  Col_2 = table_1_col_2,   
   stringsAsFactors = FALSE
 )
 
 time_use_row_text_2 <- data.frame(
-  Col_1 = rep("", 29),   # TODO: fill in row labels
-  Col_2 = rep("", 29),
+  Col_1 = table_1_col_1[-31],   # TODO: fill in row labels
+  Col_2 = table_1_col_2[-31],
   stringsAsFactors = FALSE
 )
 
 # OECD average series — loaded when available; NULL otherwise
-oecd_avg_file <- "data/oecd_average.RDS"
+oecd_avg_file <- "data/oecd average.RDS"
 oecd_avg <- if (file.exists(oecd_avg_file)) readRDS(oecd_avg_file) else NULL
