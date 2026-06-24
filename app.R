@@ -156,7 +156,24 @@ ui <- navbarPage("Data request",
                                      p("For table 1 and 2 below, please provide supplemental data and information for your national time use surveys.",
                                        style = "color:#888;font-size:13px;"),
                                      br(),
-                                     h4("Table 1. Time spent on daily activities (minutes)"),
+                                     fluidRow(
+                                       column(5,
+                                              tags$label("Survey name",
+                                                         style = "font-size:13px;font-weight:600;display:block;margin-bottom:4px;"),
+                                              textInput("tu_survey_name", label = NULL,
+                                                        placeholder = "e.g. Time Use Survey 2024",
+                                                        width = "100%")
+                                       ),
+                                       column(3,
+                                              tags$label("Latest survey year",
+                                                         style = "font-size:13px;font-weight:600;display:block;margin-bottom:4px;"),
+                                              numericInput("tu_survey_year", label = NULL,
+                                                           value = NA, min = 1990, max = 2035,
+                                                           width = "100%")
+                                       )
+                                     ),
+                                     br(),
+                                     h4(HTML("Table 1. Time spent on daily activities (minutes)")),
                                      uiOutput("time_use_table1_ui"),
                                      br(), br(),
                                      h4("Table 2. Considering the activity coding list in the national time-use survey, please indicate which activity codes are grouped under each activity (e.g. 1.1. paid work)."),
@@ -187,26 +204,41 @@ server <- function(input, output, session) {
     header <- paste0("<tr>", th, "</tr>")
     
     body <- paste(sapply(seq_len(n_rows), function(r) {
-      cells <- paste(sapply(seq_len(n_cols), function(c) {
-        if (c <= n_text_cols) {
-          # Static text from row_text data frame
-          txt <- if (!is.null(row_text) && r <= nrow(row_text)) row_text[r, c] else ""
-          paste0("<td style='font-size:11px;padding:4px 6px;border:1px solid #eee;color:#333;'>", txt, "</td>")
-        } else {
-          saved_val <- if (!is.null(saved) && !is.null(saved[[as.character(r)]])) {
-            val <- saved[[as.character(r)]][[paste0("c", c)]]
-            if (!is.null(val)) val else ""
-          } else ""
-          paste0(
-            "<td style='padding:2px;'>",
-            "<input type='text' inputmode='decimal' class='tu-num year-input' data-row='", r, "' data-col='", c, "' value='", saved_val, "' ",
-            "oninput=\"this.value=this.value.replace(/[^0-9.\\-]/g,'')\" ",
-            "style='width:100%;min-width:60px;font-size:11px;border:1px solid #ccc;border-radius:3px;padding:2px 4px;text-align:right;'/>",
-            "</td>"
-          )
-        }
-      }), collapse = "")
-      paste0("<tr data-row='", r, "'>", cells, "</tr>")
+      # Check if first column value ends in ".0" — section divider row
+      code_val <- if (!is.null(row_text) && r <= nrow(row_text)) trimws(row_text[r, 1]) else ""
+      is_divider <- grepl("\\.0$", code_val)
+      
+      if (is_divider) {
+        # Dark-blue header row spanning all columns, no inputs
+        txt2 <- if (!is.null(row_text) && r <= nrow(row_text) && n_text_cols >= 2) row_text[r, 2] else ""
+        divider_label <- if (nchar(txt2) > 0) paste0(code_val, " — ", txt2) else code_val
+        td_style <- "font-size:11px;font-weight:600;color:white;padding:6px 10px;border:1px solid #0f2843;"
+        paste0(
+          "<tr data-row='", r, "' style='background:#1a3a5c;'>",
+          "<td colspan='", n_cols, "' style='", td_style, "'>", divider_label, "</td>",
+          "</tr>"
+        )
+      } else {
+        cells <- paste(sapply(seq_len(n_cols), function(c) {
+          if (c <= n_text_cols) {
+            txt <- if (!is.null(row_text) && r <= nrow(row_text)) row_text[r, c] else ""
+            paste0("<td style='font-size:11px;padding:4px 6px;border:1px solid #eee;color:#333;'>", txt, "</td>")
+          } else {
+            saved_val <- if (!is.null(saved) && !is.null(saved[[as.character(r)]])) {
+              val <- saved[[as.character(r)]][[paste0("c", c)]]
+              if (!is.null(val)) val else ""
+            } else ""
+            paste0(
+              "<td style='padding:2px;'>",
+              "<input type='text' inputmode='decimal' class='tu-num year-input' data-row='", r, "' data-col='", c, "' value='", saved_val, "' ",
+              "oninput=\"this.value=this.value.replace(/[^0-9.\\-]/g,'')\" ",
+              "style='width:100%;min-width:60px;font-size:11px;border:1px solid #ccc;border-radius:3px;padding:2px 4px;text-align:right;'/>",
+              "</td>"
+            )
+          }
+        }), collapse = "")
+        paste0("<tr data-row='", r, "'>", cells, "</tr>")
+      }
     }), collapse = "")
     
     paste0(
@@ -658,16 +690,15 @@ server <- function(input, output, session) {
             # ── read-only: metadata + echart + note ──────────────────────────
             paste0(
               "<div style='width:100%;text-align:left;'>",
-              "<span style='font-size:13px;color:#555;'>", lbl, "</span></div>",
-              "<div><span style='font-size:11px;font-weight:600;'>Technical name: </span>",
-              "<span style='font-size:13px;color:#555;'>", tech, "</span></div>",
-              "<div><span style='font-size:11px;font-weight:600;'>Unit: </span>",
-              "<span style='font-size:13px;color:#555;'>", unt, "</span></div>",
-              "<strong style='font-size:13px;'>Definition</strong>",
-              "<p style='font-size:12px;color:#333;margin-top:4px;'>", def, "</p>",
-              "<div style='margin-top:10px;display:flex;flex-direction:column;gap:5px;'>",
-              "<div><span style='font-size:11px;font-weight:600;'>Label: </span>",
-              "</div></div>",
+              "<div><span style='font-size:13px;font-weight:600;'>Label: </span>",
+              "<span style='font-size:12px;color:#555;'>", lbl, "</span></div>",
+              "<div><span style='font-size:13px;font-weight:600;'>Technical name: </span>",
+              "<span style='font-size:12px;color:#555;'>", tech, "</span></div>",
+              "<div><span style='font-size:13px;font-weight:600;'>Unit: </span>",
+              "<span style='font-size:12px;color:#555;'>", unt, "</span></div>",
+              "<div><span style='font-size:13px;font-weight:600;'>Definition: </span>",
+              "<span style='font-size:12px;color:#555;'>", def, "</span></div>",
+              "</div>",
               "<hr style='margin:4px 0;border:none;border-top:1px solid #ddd;'/>",
               "<div style='width:100%;'><strong style='font-size:13px;'>Time Series</strong>",
               yc, "</div>",
@@ -782,7 +813,9 @@ server <- function(input, output, session) {
     req(input$session_name)
     dir.create("sessions", showWarnings = FALSE)
     path <- file.path("sessions", paste0(input$session_name, ".rds"))
-    saveRDS(reactiveValuesToList(session_data), path)
+    saveRDS(c(reactiveValuesToList(session_data),
+              list(tu_survey_name = input$tu_survey_name,
+                   tu_survey_year = input$tu_survey_year)), path)
     output$session_status <- renderUI({
       tags$span(style = "color:green;font-size:12px;", paste0("✓ Saved: ", input$session_name))
     })
@@ -799,6 +832,8 @@ server <- function(input, output, session) {
       session_data$responses  <- if (!is.null(loaded$responses))  loaded$responses  else list()
       session_data$time_use_1 <- if (!is.null(loaded$time_use_1)) loaded$time_use_1 else NULL
       session_data$time_use_2 <- if (!is.null(loaded$time_use_2)) loaded$time_use_2 else NULL
+      if (!is.null(loaded$tu_survey_name)) updateTextInput(session,   "tu_survey_name", value = loaded$tu_survey_name)
+      if (!is.null(loaded$tu_survey_year)) updateNumericInput(session, "tu_survey_year", value = loaded$tu_survey_year)
       output$session_status <- renderUI({
         tags$span(style = "color:green;font-size:12px;", paste0("✓ Loaded: ", input$load_session_name))
       })
