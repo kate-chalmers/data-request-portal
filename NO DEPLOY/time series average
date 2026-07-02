@@ -11,5 +11,6 @@ dat <- readRDS("./data/final dataset.RDS") %>%
   select(-age, -sex, -education_lev, -base_per, -obs_status) %>%
   mutate(dimension = "_T") 
 
-dat %>% timeSeriesAverage(., "_T")
+oecd_avg <- dat %>% timeSeriesAverage(., "_T")
 
+saveRDS(oecd_avg, "./data/oecd average.RDS")

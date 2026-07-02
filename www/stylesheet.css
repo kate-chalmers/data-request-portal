@@ -1,16 +1,310 @@
-.card-grow {
-  transition: all .2s ease-in-out;
+/* ── OECD brand typeface ─────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,300;0,400;0,600;0,700;1,400&display=swap');
+
+/* ── OECD colour palette ─────────────────────────────────────────────────── */
+:root {
+  --oecd-blue:    #009EDB;
+  --oecd-navy:    #003189;
+  --oecd-teal:    #0EB4C1;
+  --oecd-orange:  #F89C1C;
+  --oecd-red:     #E63312;
+  --oecd-green:   #1F7A4D;
+  --oecd-purple:  #9A4EAE;
+  --oecd-grey:    #55606B;
+  --oecd-light:   #F2F4F7;
+  --oecd-border:  #D4D9DF;
+  --text-dark:    #1F2B3A;
+  --text-mid:     #55606B;
 }
 
-.card-grow:hover {
-  transform: scale(1.1);
-  cursor: pointer;
+/* ── Base ────────────────────────────────────────────────────────────────── */
+body, .shiny-input-container, input, textarea, select, button, label,
+p, span, div, td, th {
+  font-family: 'Noto Sans', -apple-system, Arial, sans-serif !important;
+  color: var(--text-dark);
+}
+h1, h2, h3, h4, h5, h6, strong, b {
+  font-family: 'Noto Sans', -apple-system, Arial, sans-serif !important;
+  color: var(--text-dark);
+}
+body { background: #F7F9FC; }
+.container-fluid { max-width: 1400px; }
+
+/* ── Navbar ──────────────────────────────────────────────────────────────── */
+.navbar {
+  background: var(--oecd-navy) !important;
+  border: none !important;
+  border-bottom: 3px solid var(--oecd-blue) !important;
+  box-shadow: 0 2px 8px rgba(0,49,137,0.2);
+}
+.navbar-brand, .navbar-nav > li > a {
+  color: rgba(255,255,255,0.92) !important;
+  font-weight: 600;
+  font-size: 13px !important;
+  letter-spacing: 0.02em;
+}
+.navbar-nav > li.active > a,
+.navbar-nav > li > a:hover,
+.navbar-nav > li > a:focus {
+  background: rgba(0,158,219,0.25) !important;
+  color: #ffffff !important;
+  border-radius: 0;
 }
 
-/* Hide number-input spinners (belt-and-suspenders alongside type=text) */
-input[type=number]::-webkit-outer-spin-button,
-input[type=number]::-webkit-inner-spin-button {
-  -webkit-appearance: none;
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+.btn {
+  font-family: 'Noto Sans', sans-serif !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.02em;
+  border-radius: 5px !important;
+  transition: all .15s ease !important;
+}
+.btn-primary, .btn-primary:visited {
+  background: var(--oecd-blue) !important;
+  border-color: var(--oecd-blue) !important;
+  color: #fff !important;
+}
+.btn-primary:hover, .btn-primary:focus {
+  background: var(--oecd-navy) !important;
+  border-color: var(--oecd-navy) !important;
+  box-shadow: 0 3px 8px rgba(0,49,137,0.25) !important;
+}
+.btn-default:hover, .btn-default:focus {
+  background: var(--oecd-light) !important;
+  border-color: var(--oecd-border) !important;
+}
+
+/* ── Form controls ───────────────────────────────────────────────────────── */
+.form-control {
+  border: 1px solid var(--oecd-border) !important;
+  border-radius: 5px !important;
+  font-size: 13px !important;
+  color: var(--text-dark) !important;
+  background: #fff !important;
+  transition: border-color .15s, box-shadow .15s !important;
+}
+.form-control:focus {
+  border-color: var(--oecd-blue) !important;
+  box-shadow: 0 0 0 3px rgba(0,158,219,0.15) !important;
+  outline: none !important;
+}
+.form-control::placeholder { color: #aab0b8 !important; }
+select.form-control { cursor: pointer; }
+
+/* ── Landing hero ────────────────────────────────────────────────────────── */
+.landing-hero {
+  background: #fff;
+  border-radius: 10px;
+  border: 1px solid var(--oecd-border);
+  padding: 36px 44px;
+  margin: 20px auto;
+  max-width: 860px;
+  box-shadow: 0 2px 12px rgba(0,49,137,0.06);
+}
+.landing-hero p {
+  font-size: 13.5px !important;
+  line-height: 1.75 !important;
+  color: var(--text-mid) !important;
   margin: 0;
 }
+.landing-logo-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+  margin-bottom: 24px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--oecd-light);
+}
+
+/* ── Session card ────────────────────────────────────────────────────────── */
+.session-card {
+  background: #fff;
+  border: 1px solid var(--oecd-border);
+  border-radius: 10px;
+  padding: 22px 28px 18px;
+  max-width: 520px;
+  margin: 24px auto;
+  box-shadow: 0 2px 12px rgba(0,49,137,0.07);
+}
+.session-card .session-title {
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--oecd-grey) !important;
+  margin: 0 0 14px 0;
+}
+.session-card .session-divider {
+  border: none;
+  border-top: 1px solid var(--oecd-light);
+  margin: 14px 0;
+}
+.session-card label {
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  color: var(--text-mid) !important;
+  margin-bottom: 4px !important;
+}
+.session-status-ok   { font-size:12px; color:var(--oecd-green);  font-weight:600; }
+.session-status-err  { font-size:12px; color:var(--oecd-red);    font-weight:600; }
+
+/* ── Legend swatches ─────────────────────────────────────────────────────── */
+.heatmap-legend {
+  display: flex;
+  gap: 20px;
+  font-size: 11px;
+  margin-bottom: 12px;
+  justify-content: center;
+  color: var(--text-mid);
+  align-items: center;
+}
+.heatmap-legend .swatch {
+  display: inline-block;
+  width: 11px; height: 11px;
+  border-radius: 2px;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+
+/* ── Well-being section dividers ─────────────────────────────────────────── */
+.wb-section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  margin: 28px 0 10px 0;
+  background: linear-gradient(135deg, var(--oecd-navy) 0%, #1a4ba0 100%);
+  color: #ffffff !important;
+  border-radius: 6px;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  box-shadow: 0 3px 8px rgba(0,49,137,0.22);
+  user-select: none;
+}
+.wb-section-header span { color: #ffffff !important; }
+
+/* ── Dimension group headers ─────────────────────────────────────────────── */
+.dim-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px 8px 14px;
+  margin: 12px 0 4px 0;
+  background: #F8F9FB;
+  border-radius: 6px;
+  border-left: 4px solid var(--oecd-blue);
+}
+.dim-header h4 {
+  margin: 0;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  color: var(--oecd-navy) !important;
+  display: flex;
+  align-items: center;
+}
+
+/* ── Completeness progress bar ───────────────────────────────────────────── */
+.comp-wrap {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+}
+.comp-bar {
+  width: 72px; height: 5px;
+  background: var(--oecd-border);
+  border-radius: 99px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.comp-fill {
+  height: 100%;
+  border-radius: 99px;
+  background: var(--oecd-orange);
+  transition: width .4s ease;
+}
+.comp-fill.comp-full { background: var(--oecd-green); }
+.comp-label {
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  white-space: nowrap;
+  min-width: 28px;
+  text-align: right;
+}
+.comp-ok   { color: var(--oecd-green)  !important; }
+.comp-warn { color: var(--oecd-orange) !important; }
+.comp-tooltip {
+  font-size: 9.5px !important;
+  color: var(--text-mid) !important;
+  white-space: nowrap;
+}
+
+/* ── Heatmap rows & panels ───────────────────────────────────────────────── */
+.heatmap-row-label {
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.collapsible-panel {
+  border: 1px solid var(--oecd-border) !important;
+  border-radius: 8px !important;
+  background: #FFFFFF !important;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  margin-bottom: 6px;
+}
+
+/* ── Table styling (time use) ────────────────────────────────────────────── */
+table { border-collapse: collapse; }
+table th {
+  background: var(--oecd-navy) !important;
+  color: #fff !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  padding: 7px 10px !important;
+  border: none !important;
+}
+table td { font-size: 11px !important; }
+table tr:nth-child(even) td { background: #F8F9FB; }
+
+/* ── Number-input spinner removal ───────────────────────────────────────── */
+input[type=number]::-webkit-outer-spin-button,
+input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 input[type=number] { -moz-appearance: textfield; }
+
+/* ── Card grow ───────────────────────────────────────────────────────────── */
+.card-grow { transition: all .2s ease-in-out; }
+.card-grow:hover { transform: scale(1.1); cursor: pointer; }
+
+/* ── Max-width constraints ───────────────────────────────────────────────── */
+
+/* Dropdown/select inputs — prevent extreme stretching on wide screens */
+select.form-control,
+.selectize-control,
+.selectize-input,
+.shiny-input-container select {
+  max-width: 520px !important;
+}
+
+/* Text/numeric inputs in panels */
+.resp-input,
+textarea.form-control {
+  max-width: 680px;
+}
+
+/* Time Use tables */
+.tu-table-wrap {
+  max-width: 1050px;
+}
+
+/* Main content columns — cap at a readable width */
+.heatmap-content {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* ── Misc utilities ──────────────────────────────────────────────────────── */
+hr { border-color: var(--oecd-border) !important; }

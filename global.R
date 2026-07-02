@@ -77,8 +77,6 @@ table_1_col_1 <- c(
   "T"
 )
 
-table_1_col_2 %>% length()
-
 table_1_col_2 <- c(
   "Paid work or study", "Paid work (all jobs)", "Travel to and from work/study", "Time in school or classes", "Research/homework", "Job search", "Other paid work or study-related",
   "Unpaid work", "Routine housework", "Shopping", "Care for household members", "Child care", "Adult care", "Care for non household members", "Volunteering", "Travel related to household activities", "Other unpaid",
