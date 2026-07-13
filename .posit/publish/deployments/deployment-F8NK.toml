@@ -2,7 +2,7 @@
 "$schema" = "https://cdn.posit.co/publisher/schemas/posit-publishing-record-schema-v3.json"
 server_type = "connect_cloud"
 server_url = "https://connect.posit.cloud"
-client_version = "2.9.0"
+client_version = "2.9.4"
 created_at = "2026-06-24T13:43:27.488Z"
 type = "r-shiny"
 configuration_name = "data_requests-OI4F"
@@ -10,8 +10,8 @@ id = "019ef9e0-05de-aa28-6909-dd61b974a797"
 dashboard_url = "https://connect.posit.cloud/kate-chalmers/content/019ef9e0-05de-aa28-6909-dd61b974a797"
 direct_url = "https://019ef9e0-05de-aa28-6909-dd61b974a797.share.connect.posit.cloud"
 logs_url = "https://connect.posit.cloud/kate-chalmers/content/019ef9e0-05de-aa28-6909-dd61b974a797/history"
-deployed_at = "2026-06-24T13:45:07.778Z"
-bundle_id = "019ef9e0-72b8-d096-6353-f42b2ca2a6ae"
+deployed_at = "2026-07-02T11:01:55.414Z"
+bundle_id = "019f227d-f5cd-b3a1-ef2b-c0e45fd4dce2"
 files = [
     ".posit/publish/data_requests-OI4F.toml",
     ".posit/publish/deployments/deployment-F8NK.toml",
@@ -303,10 +303,10 @@ repository = "CRAN"
 
 [renv.packages.RSQLite]
 package = "RSQLite"
-version = "3.53.2"
+version = "3.53.3"
 source = "Repository"
 title = "SQLite Interface for R"
-date = "2026-06-12"
+date = "2026-06-28"
 "authors@r" = "c( person(\"Kirill\", \"Müller\", , \"kirill@cynkra.com\", role = c(\"aut\", \"cre\"), comment = c(ORCID = \"0000-0002-1416-3412\")), person(\"Hadley\", \"Wickham\", role = \"aut\"), person(c(\"David\", \"A.\"), \"James\", role = \"aut\"), person(\"Seth\", \"Falcon\", role = \"aut\"), person(\"D. Richard\", \"Hipp\", role = \"ctb\", comment = \"for the included SQLite sources\"), person(\"Dan\", \"Kennedy\", role = \"ctb\", comment = \"for the included SQLite sources\"), person(\"Joe\", \"Mistachkin\", role = \"ctb\", comment = \"for the included SQLite sources\"), person(, \"SQLite Authors\", role = \"ctb\", comment = \"for the included SQLite sources\"), person(\"Liam\", \"Healy\", role = \"ctb\", comment = \"for the included SQLite sources\"), person(\"R Consortium\", role = \"fnd\"), person(, \"RStudio\", role = \"cph\") )"
 description = "Embeds the SQLite database engine in R and provides an interface compliant with the DBI package. The source for the SQLite engine and for various extensions is included. System libraries will never be consulted because this package relies on static linking for the plugins it includes; this also ensures a consistent experience across all installations. Optionally, when libcurl is available at build time, an experimental HTTP/HTTPS virtual file system (VFS) can be enabled to allow read-only access to remote immutable SQLite database files via URIs."
 license = "LGPL (>= 2.1)"
@@ -2235,9 +2235,9 @@ repository = "CRAN"
 
 [renv.packages.gridExtra]
 package = "gridExtra"
-version = "2.3"
+version = "2.3.1"
 source = "Repository"
-"authors@r" = "c(person(\"Baptiste\", \"Auguie\", email = \"baptiste.auguie@gmail.com\", role = c(\"aut\", \"cre\")), person(\"Anton\", \"Antonov\", email = \"tonytonov@gmail.com\", role = c(\"ctb\")))"
+"authors@r" = "c(person(\"Baptiste\", \"Auguie\", email = \"baptiste.auguie@vuw.ac.nz\", role = c(\"aut\", \"cre\")), person(\"Anton\", \"Antonov\", email = \"tonytonov@gmail.com\", role = c(\"ctb\")))"
 license = "GPL (>= 2)"
 title = "Miscellaneous Functions for \"Grid\" Graphics"
 type = "Package"
@@ -2260,7 +2260,7 @@ suggests = [
 roxygen_note = "6.0.1"
 needs_compilation = "no"
 author = "Baptiste Auguie [aut, cre], Anton Antonov [ctb]"
-maintainer = "Baptiste Auguie <baptiste.auguie@gmail.com>"
+maintainer = "Baptiste Auguie <baptiste.auguie@vuw.ac.nz>"
 repository = "CRAN"
 
 [renv.packages.gsl]

@@ -37,11 +37,39 @@ body { background: #F7F9FC; }
   border-bottom: 3px solid var(--oecd-blue) !important;
   box-shadow: 0 2px 8px rgba(0,49,137,0.2);
 }
-.navbar-brand, .navbar-nav > li > a {
-  color: rgba(255,255,255,0.92) !important;
+.navbar-brand, .navbar-brand span,
+.navbar-nav > li > a {
+  color: #ffffff !important;
   font-weight: 600;
-  font-size: 13px !important;
+  font-size: 14px !important;
   letter-spacing: 0.02em;
+}
+.navbar-brand {
+  font-size: 17px !important;
+  font-weight: 700 !important;
+  padding-top: 12px !important;
+  padding-bottom: 12px !important;
+}
+/* Utility buttons (gear, logout) in navbar */
+.navbar-right-utils {
+  position: absolute;
+  right: 16px;
+  top: 0;
+  height: 50px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  z-index: 1000;
+}
+.navbar-right-utils a {
+  color: rgba(255,255,255,0.8) !important;
+  font-size: 15px;
+  padding: 6px 10px;
+  transition: color .15s;
+}
+.navbar-right-utils a:hover {
+  color: #ffffff !important;
+  background: transparent !important;
 }
 .navbar-nav > li.active > a,
 .navbar-nav > li > a:hover,
@@ -304,6 +332,43 @@ textarea.form-control {
 .heatmap-content {
   max-width: 1200px;
   margin: 0 auto;
+}
+
+/* ── Yes/No toggle ───────────────────────────────────────────────────────── */
+.toggle-group {
+  display: inline-flex;
+  border: 1px solid var(--oecd-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.toggle-btn {
+  border: none;
+  background: #fff;
+  color: var(--text-mid);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 20px;
+  cursor: pointer;
+  transition: all .12s ease;
+}
+.toggle-btn + .toggle-btn { border-left: 1px solid var(--oecd-border); }
+.toggle-btn:hover { background: var(--oecd-light); }
+.toggle-btn.active {
+  background: var(--oecd-blue);
+  color: #fff;
+}
+
+/* ── No-update button ───────────────────────────────────────────────────── */
+.no-update-btn {
+  transition: all .15s ease;
+}
+.no-update-btn:hover {
+  background: #eee !important;
+}
+.no-update-btn.active {
+  background: var(--oecd-green) !important;
+  color: #fff !important;
+  border-color: var(--oecd-green) !important;
 }
 
 /* ── Misc utilities ──────────────────────────────────────────────────────── */

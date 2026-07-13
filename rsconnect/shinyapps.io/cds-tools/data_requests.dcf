@@ -5,7 +5,7 @@ account: cds-tools
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 17188739
-bundleId: 12172793
+bundleId: 12244174
 url: https://cds-tools.shinyapps.io/data_requests/
 version: 1
 asMultiple: FALSE

@@ -7,6 +7,9 @@ shared_head <- tagList(
   tags$link(rel = "preconnect", href = "https://fonts.gstatic.com", crossorigin = NA),
   tags$link(rel = "stylesheet", type = "text/css", href = "stylesheet.css"),
   tags$script(src = "https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"),
+  tags$script(HTML(paste0(
+    "window.__validRanges = ", jsonlite::toJSON(validation_ranges, auto_unbox = TRUE), ";"
+  ))),
   tags$script(HTML("
     window.__chartOpts = window.__chartOpts || {};
 
@@ -29,15 +32,51 @@ shared_head <- tagList(
     function submitMeasure(safe_id, measure) {
       var container = document.getElementById('inputs_' + safe_id);
       var inputs = container.querySelectorAll('.year-input');
+
+      // Validate against ranges if defined
+      var range = window.__validRanges && window.__validRanges[measure];
+      if (range) {
+        var bad = [];
+        inputs.forEach(function(inp) {
+          if (inp.value === '') return;
+          var v = parseFloat(inp.value);
+          if (isNaN(v)) return;
+          if (v < range.min || v > range.max) {
+            bad.push(inp.dataset.year + ' (' + inp.dataset.row + '): ' + v);
+            inp.style.border = '2px solid #E63312';
+          } else {
+            inp.style.border = '1px solid #ccc';
+          }
+        });
+        if (bad.length > 0) {
+          var statusEl = document.getElementById('status_' + safe_id);
+          if (statusEl) {
+            statusEl.style.color = '#E63312';
+            statusEl.innerText = 'Values out of range (' + range.min + ' to ' + range.max + '): ' + bad.length + ' field(s). Please correct before submitting.';
+          }
+          return;
+        }
+      }
+
       var values = {};
       inputs.forEach(function(inp) {
         var row = inp.dataset.row || 'country_avg';
         var yr  = inp.dataset.year;
         if (!values[row]) values[row] = {};
         values[row][yr] = inp.value === '' ? null : parseFloat(inp.value);
+        inp.style.border = '1px solid #ccc';
       });
+      // Also collect the Country Question Format responses from this panel
+      var panel = document.getElementById('panel_' + safe_id);
+      var responses = {};
+      if (panel) {
+        panel.querySelectorAll('.resp-input').forEach(function(inp) {
+          responses[inp.dataset.idx] = inp.value;
+        });
+      }
       Shiny.setInputValue('submitted_data',
-        { measure: measure, values: values, timestamp: new Date().toISOString() },
+        { measure: measure, safe_id: safe_id, values: values, responses: responses,
+          timestamp: new Date().toISOString() },
         {priority: 'event'});
     }
 
@@ -56,23 +95,75 @@ shared_head <- tagList(
         {priority: 'event'});
     }
 
-    function submitResponses(measure) {
-      var safe_id = measure.replace(/[^a-zA-Z0-9]/g, '_');
-      var panel = document.getElementById('panel_' + safe_id);
-      var inputs = panel ? panel.querySelectorAll('.resp-input') : [];
-      var values = {};
-      inputs.forEach(function(inp) { values[inp.dataset.idx] = inp.value; });
-      Shiny.setInputValue('submitted_responses',
-        { measure: measure, values: values, timestamp: new Date().toISOString() },
-        {priority: 'event'});
-    }
-
     function submitNote(safe_id, measure) {
       var el = document.getElementById('note_' + safe_id);
       Shiny.setInputValue('submitted_note',
-        { measure: measure, note: el ? el.value : '', timestamp: new Date().toISOString() },
+        { measure: measure, safe_id: safe_id, note: el ? el.value : '', timestamp: new Date().toISOString() },
         {priority: 'event'});
     }
+
+    function declareNoUpdate(safe_id, measure) {
+      var btn = document.getElementById('noupdate_' + safe_id);
+      var isActive = btn.classList.toggle('active');
+      Shiny.setInputValue('no_update_declared',
+        { measure: measure, safe_id: safe_id, active: isActive,
+          timestamp: new Date().toISOString() },
+        {priority: 'event'});
+    }
+
+    // Yes/No toggle: set hidden value, highlight choice, and when 'No' is
+    // chosen disable every other response box in the same panel.
+    function setToggle(inputId, btn, val) {
+      var input = document.getElementById(inputId);
+      if (input) input.value = val;
+      var group = btn.parentNode;
+      group.querySelectorAll('.toggle-btn').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+
+      var panel = btn.closest('.collapsible-panel');
+      if (!panel) return;
+      var disable = (val === 'No');
+      // Text response boxes
+      panel.querySelectorAll('.resp-input').forEach(function(el) {
+        if (el.id === inputId || el.type === 'hidden') return;
+        el.disabled = disable;
+        el.style.opacity = disable ? '0.45' : '1';
+        el.style.background = disable ? '#f0f0f0' : '#fff';
+      });
+      // Other toggle groups
+      panel.querySelectorAll('.toggle-group').forEach(function(g) {
+        if (g.contains(btn)) return;
+        g.querySelectorAll('.toggle-btn').forEach(function(b) {
+          b.disabled = disable;
+          b.style.opacity = disable ? '0.45' : '1';
+        });
+      });
+    }
+
+    // Auto-expand textareas: resize to fit content, with a comfortable minimum
+    function autoResizeTextarea(el) {
+      el.style.height = 'auto';
+      var contentH = el.scrollHeight;
+      // At rest: at least 32px (one line); when focused or has content: at least 60px
+      var minH = (el === document.activeElement || el.value.trim() !== '') ? 60 : 32;
+      el.style.height = Math.max(contentH, minH) + 'px';
+    }
+    // Delegate input/focus/blur events for dynamically created textareas
+    document.addEventListener('input', function(e) {
+      if (e.target.classList.contains('resp-textarea')) autoResizeTextarea(e.target);
+    });
+    document.addEventListener('focus', function(e) {
+      if (e.target.classList.contains('resp-textarea')) autoResizeTextarea(e.target);
+    }, true);
+    document.addEventListener('blur', function(e) {
+      if (e.target.classList.contains('resp-textarea')) autoResizeTextarea(e.target);
+    }, true);
+    // Auto-resize all textareas after Shiny renders new content
+    $(document).on('shiny:value', function() {
+      setTimeout(function() {
+        document.querySelectorAll('.resp-textarea').forEach(autoResizeTextarea);
+      }, 100);
+    });
   "))
 )
 
@@ -157,6 +248,13 @@ ui <- tagList(
   shinyjs::hidden(
     tags$div(
       id = "main_app",
+      tags$div(
+        class = "navbar-right-utils",
+        actionLink("change_pw_modal_btn", label = NULL, icon = icon("gear"),
+                   title = "Change password"),
+        actionLink("logout_btn", label = NULL, icon = icon("right-from-bracket"),
+                   title = "Log out")
+      ),
       navbarPage(
         title = uiOutput("nav_title", inline = TRUE),
         id    = "main_navbar",
@@ -172,17 +270,52 @@ ui <- tagList(
                     img(src = "wise_logo.png", height = 60),
                     img(src = "OECD_logo.svg", height = 36)
                   ),
-                  tags$p(
-                    "Please complete the data fields below for each indicator requiring national input.
-                     Fields are pre-filled where existing data is available in the OECD",
-                    tags$em("How\u2019s Life? Well-being Database."),
-                    "Submit each section using the button provided."
+                  tags$p(HTML(
+                    "The purpose of this questionnaire is to gather national data on different aspects of well-being in OECD member countries to ensure they are 
+                    reflected in the OECD Well-being Database and associated products such as upcoming editions of the <a href='https://www.oecd.org/en/publications/serials/how-s-life_g1g317ee.html'>
+                    How's Life? publication series</a>,
+                    the <a href='https://www.oecd.org/en/data/tools/well-being-data-monitor.html'>OECD Well-being Data Monitor</a>
+                    and annually updated <a href=''>well-being country profiles</a>.<br><br> The OECD Well-being Database includes over 80 indicators, the majority 
+                    of which are sourced from other OECD and external international data collections. To ensure a streamlined process, this questionnaire covers the 
+                    indicators that are unique to the OECD Well-being Database as well as relevant information for the OECD Time Use Database. It therefore 
+                    excludes indicators that are managed through other OECD data collection activities, or by other external international data producers. All types of 
+                    offical surveys are of interest to this exercise, including (but not limited to) household surveys, health surveys, general social surveys, time-use 
+                    surveys and ad hoc surveys.
+                    <br><br>
+                    The OECD Well-being Database can be accessed <a href='http://data-explorer.oecd.org/s/fu'>here.</a><br>
+                    The OECD Time Use Database can be accessed <a href='http://data-explorer.oecd.org/s/177'>here.</a><br><br>
+                    For information about the OECD Well-being Framework, see <a href='https://www.oecd.org/wise/measuring-well-being-and-progress.htm'>here.</a><br>
+                    For metadata and definitions of all indicators covered in the OECD Well-being Database, see <a href='https://www.oecd.org/content/dam/oecd/en/topics/policy-sub-issues/measuring-well-being-and-progress/oecd-well-being-database-definitions.pdf'>here</a><br>
+                    ")
                   )
                 )
               ),
               column(1)
             ),
-            br(),
+            fluidRow(
+              column(1),
+              column(10,
+                tags$div(
+                  style = paste0(
+                    "background:#f0f6ff;border:1px solid #c5d7ee;border-radius:8px;",
+                    "padding:16px 22px;margin-bottom:20px;font-size:12px;color:#1F2B3A;line-height:1.6;"
+                  ),
+                  tags$p(style = "font-weight:700;margin:0 0 6px;font-size:13px;", "Quick guide"),
+                  tags$ul(style = "margin:0;padding-left:18px;",
+                    tags$li("Each indicator below is shown as a row in the heatmap.",
+                            tags$b("Green"), "cells = existing data,",
+                            tags$b("orange"), "= submitted this session,",
+                            tags$b("grey"), "= no data."),
+                    tags$li("Click any indicator row to expand its panel, enter values, and press",
+                            tags$b("\u2713 Submit"), "to save."),
+                    tags$li("Your progress is", tags$b("auto-saved"), "and will be restored if you log out and back in."),
+                    tags$li("Indicators marked", tags$span(style = "font-size:9px;background:#F89C1C;color:white;border-radius:3px;padding:1px 4px;", "\u26A0 Awaiting data input"),
+                            "still need your input.")
+                  )
+                )
+              ),
+              column(1)
+            ),
             fluidRow(
               column(1),
               column(10, align = "center",
@@ -192,39 +325,7 @@ ui <- tagList(
                 )
               ),
               column(1)
-            )
-          )
-        ),
-
-        # ── Tab 2: Well-being Data Coverage ───────────────────────────────
-        tabPanel("Well-being Data Coverage",
-          fluidPage(
-            fluidRow(
-              column(1),
-              column(10,
-                tags$div(class = "landing-hero",
-                  tags$p(
-                    style = "margin:0;",
-                    "Overview of all well-being indicators in the OECD",
-                    tags$em("How\u2019s Life? Well-being Database"),
-                    "and the current data coverage for your country.
-                     Click any indicator to view its time series."
-                  )
-                )
-              ),
-              column(1)
-            ),
-            br(),
-            fluidRow(
-              column(1),
-              column(10, align = "center",
-                tags$div(class = "heatmap-content",
-                  heatmap_legend,
-                  uiOutput("heatmap_coverage")
-                )
-              ),
-              column(1)
-            )
+            ) %>% shinycssloaders::withSpinner()
           )
         ),
 
@@ -263,8 +364,166 @@ ui <- tagList(
               column(1)
             )
           )
+        ),
+        
+        # ── Tab 2: Well-being Data Coverage ───────────────────────────────
+        tabPanel("Well-being Data Coverage",
+                 fluidPage(
+                   fluidRow(
+                     column(1),
+                     column(10,
+                            tags$div(class = "landing-hero",
+                                     tags$p(
+                                       style = "margin:0;",
+                                       "Overview of all well-being indicators in the OECD",
+                                       tags$em("How\u2019s Life? Well-being Database"),
+                                       "and the current data coverage for your country.
+                     Click any indicator to view its time series."
+                                     )
+                            )
+                     ),
+                     column(1)
+                   ),
+                   br(),
+                   fluidRow(
+                     column(1),
+                     column(10, align = "center",
+                            tags$div(class = "heatmap-content",
+                                     heatmap_legend,
+                                     uiOutput("heatmap_coverage")
+                            )
+                     ),
+                     column(1)
+                   )
+                 )
+        ),
+
+        # ── Tab 4: Admin ───────────────────────────────────────────────────
+        tabPanel("Admin",
+          fluidPage(
+            br(),
+            fluidRow(
+              column(1),
+              column(10,
+                # ── Admin login gate ──────────────────────────────────────
+                tags$div(
+                  id = "admin_login_gate",
+                  style = "max-width:380px;margin:60px auto;text-align:center;",
+                  tags$h4("Admin Access", style = "font-weight:700;color:#1F2B3A;"),
+                  tags$p("Enter the admin password to view submitted data.",
+                         style = "font-size:12px;color:#55606B;margin-bottom:18px;"),
+                  passwordInput("admin_password", NULL, width = "100%",
+                                placeholder = "Admin password"),
+                  actionButton("admin_login_btn", "Unlock",
+                               class = "btn-primary",
+                               style = "width:100%;margin-top:8px;font-weight:600;"),
+                  uiOutput("admin_login_error", style = "margin-top:10px;")
+                ),
+
+                # ── Admin content (hidden until authenticated) ────────────
+                shinyjs::hidden(
+                  tags$div(
+                    id = "admin_panel",
+                    tags$h3("Submitted Data", style = "font-weight:700;margin-bottom:4px;"),
+                    tags$p("Data entered by countries via the portal.",
+                           style = "font-size:12px;color:#888;margin-bottom:16px;"),
+                    fluidRow(
+                      column(4,
+                        selectInput("admin_country_filter", "Country",
+                                    choices = c("All countries" = "ALL"),
+                                    width = "100%")
+                      ),
+                      column(4,
+                        selectInput("admin_table_select", "Table",
+                                    choices = c("Data entries" = "entries",
+                                                "Notes" = "notes",
+                                                "Responses" = "responses",
+                                                "Time-use table 1" = "tu1",
+                                                "Time-use table 2" = "tu2",
+                                                "Feedback" = "feedback"),
+                                    width = "100%")
+                      ),
+                      column(4, style = "padding-top:25px;",
+                        downloadButton("admin_download_csv", "Download CSV",
+                                       style = "width:100%;")
+                      )
+                    ),
+                    DT::dataTableOutput("admin_data_table"),
+
+                    # ── Reset all data ──────────────────────────────────
+                    tags$hr(style = "margin:30px 0 20px;border-color:#eee;"),
+                    tags$div(
+                      style = "display:flex;align-items:center;gap:16px;",
+                      actionButton("admin_reset_btn", "Reset All Submissions",
+                                   icon = icon("trash"),
+                                   style = "background:#E63312;color:white;border:none;font-weight:600;"),
+                      tags$span(
+                        style = "font-size:12px;color:#888;",
+                        "Permanently deletes all saved session files for every country."
+                      )
+                    ),
+                    uiOutput("admin_reset_feedback", style = "margin-top:10px;")
+                  )
+                )
+              ),
+              column(1)
+            )
+          )
         )
-      ) # end navbarPage
+      ), # end navbarPage
+
+      # ── Page bottom padding ──────────────────────────────────────────
+      tags$div(style = "height:60px;"),
+
+      # ── Feedback / contact footer (visible on all tabs) ─────────────
+      tags$div(
+        style = paste0(
+          "background:#f5f7fa;border-top:1px solid #dde1e6;padding:24px 0;",
+          "margin-top:20px;"
+        ),
+        fluidRow(
+          column(1),
+          column(10,
+            tags$div(
+              style = "display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start;",
+              tags$div(
+                style = "flex:1;min-width:260px;",
+                tags$h5(style = "font-weight:700;margin:0 0 8px;font-size:14px;color:#1F2B3A;",
+                        "Contact & Support"),
+                tags$p(style = "font-size:12px;color:#55606B;line-height:1.7;margin:0;", HTML(
+                  "For questions about the questionnaire or data submissions:<br>",
+                  "<a href='mailto:kate.chalmers@oecd.org' style='color:#009EDB;'>kate.chalmers@oecd.org</a><br>",
+                  "<a href='mailto:lara.fleischer@oecd.org' style='color:#009EDB;'>lara.fleischer@oecd.org</a><br>",
+                  "<a href='mailto:wellbeing@oecd.org' style='color:#009EDB;'>wellbeing@oecd.org</a>"
+                ))
+              ),
+              tags$div(
+                style = "flex:1;min-width:300px;",
+                tags$h5(style = "font-weight:700;margin:0 0 8px;font-size:14px;color:#1F2B3A;",
+                        "Feedback"),
+                tags$p(style = "font-size:11px;color:#888;margin:0 0 6px;",
+                       "Let us know if you encounter any issues or have suggestions."),
+                tags$textarea(
+                  id = "feedback_text",
+                  placeholder = "Type your feedback here\u2026",
+                  rows = "3",
+                  style = paste0(
+                    "width:100%;font-size:12px;font-family:inherit;border:1px solid #ccc;",
+                    "border-radius:4px;padding:8px;box-sizing:border-box;resize:vertical;"
+                  )
+                ),
+                tags$div(
+                  style = "margin-top:8px;display:flex;align-items:center;gap:10px;",
+                  actionButton("send_feedback_btn", "Send feedback",
+                               style = "background:#009EDB;color:white;border:none;padding:6px 16px;border-radius:4px;font-size:12px;font-weight:600;"),
+                  uiOutput("feedback_status", inline = TRUE)
+                )
+              )
+            )
+          ),
+          column(1)
+        )
+      )
     )   # end main_app div
   )     # end hidden
 )       # end tagList
@@ -277,11 +536,12 @@ server <- function(input, output, session) {
   dat_rv      <- reactiveVal(NULL)
 
   output$nav_title <- renderUI({
-    if (!credentials$authenticated) return(tags$span("How\u2019s Life?"))
+    if (!credentials$authenticated) return(tags$span("OECD Well-being Questionnaire Portal"))
     tags$span(
-      "How\u2019s Life?",
+      style = "color:#ffffff !important;",
+      "OECD Well-being Questionnaire Portal",
       tags$span(
-        style = "font-size:11px;font-weight:400;background:rgba(255,255,255,0.18);padding:2px 10px;border-radius:12px;margin-left:12px;",
+        style = "font-size:13px;font-weight:500;color:#ffffff !important;background:rgba(255,255,255,0.22);padding:3px 12px;border-radius:12px;margin-left:14px;",
         credentials$country_name
       )
     )
@@ -295,7 +555,11 @@ server <- function(input, output, session) {
       )
       return()
     }
-    if (input$login_password != "oecd2026") {
+    # Check per-country password first, then fall back to default
+    pw_file   <- file.path("sessions", "passwords.rds")
+    pw_store  <- if (file.exists(pw_file)) tryCatch(readRDS(pw_file), error = function(e) list()) else list()
+    valid_pw  <- pw_store[[input$login_country]] %||% "oecd2026"
+    if (input$login_password != valid_pw) {
       output$login_error <- renderUI(
         tags$p(style = "color:#E63312;font-size:12px;margin:0;", "Incorrect password. Please try again.")
       )
@@ -319,6 +583,7 @@ server <- function(input, output, session) {
         session_data$entries    <- loaded$entries    %||% list()
         session_data$notes      <- loaded$notes      %||% list()
         session_data$responses  <- loaded$responses  %||% list()
+        session_data$no_updates <- loaded$no_updates  %||% list()
         session_data$time_use_1 <- loaded$time_use_1
         session_data$time_use_2 <- loaded$time_use_2
         if (!is.null(loaded$tu_survey_name))
@@ -332,11 +597,102 @@ server <- function(input, output, session) {
     shinyjs::show("main_app")
   })
 
+  # ── Logout ────────────────────────────────────────────────────────────────────
+  observeEvent(input$logout_btn, {
+    credentials$authenticated <- FALSE
+    credentials$country       <- NULL
+    credentials$country_name  <- NULL
+    dat_rv(NULL)
+
+    # Reset session data
+    session_data$entries    <- list()
+    session_data$notes      <- list()
+    session_data$responses  <- list()
+    session_data$time_use_1 <- NULL
+    session_data$time_use_2 <- NULL
+
+    # Reset login form
+    updateSelectInput(session, "login_country", selected = "")
+    updateTextInput(session, "login_password", value = "")
+    output$login_error <- renderUI(NULL)
+
+    shinyjs::hide("main_app")
+    shinyjs::show("login_screen")
+  })
+
+  # ── Change password (modal, only available when logged in) ───────────────────
+  observeEvent(input$change_pw_modal_btn, {
+    req(credentials$authenticated)
+    showModal(modalDialog(
+      title = paste0("Change password \u2014 ", credentials$country_name),
+      size = "s",
+      easyClose = TRUE,
+      tags$div(
+        style = "margin-bottom:12px;",
+        tags$label("Current password",
+                   style = "font-size:11px;font-weight:600;color:#55606B;display:block;margin-bottom:4px;"),
+        passwordInput("pw_current", NULL, width = "100%", placeholder = "Enter current password")
+      ),
+      tags$div(
+        style = "margin-bottom:12px;",
+        tags$label("New password",
+                   style = "font-size:11px;font-weight:600;color:#55606B;display:block;margin-bottom:4px;"),
+        passwordInput("pw_new", NULL, width = "100%", placeholder = "Enter new password")
+      ),
+      tags$div(
+        style = "margin-bottom:4px;",
+        tags$label("Confirm new password",
+                   style = "font-size:11px;font-weight:600;color:#55606B;display:block;margin-bottom:4px;"),
+        passwordInput("pw_confirm", NULL, width = "100%", placeholder = "Confirm new password")
+      ),
+      uiOutput("change_pw_msg"),
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("change_pw_btn", "Update password",
+                     style = "background:#009EDB;color:white;border:none;font-weight:600;")
+      )
+    ))
+  })
+
+  observeEvent(input$change_pw_btn, {
+    req(credentials$authenticated, credentials$country)
+    iso <- credentials$country
+
+    pw_file  <- file.path("sessions", "passwords.rds")
+    pw_store <- if (file.exists(pw_file)) tryCatch(readRDS(pw_file), error = function(e) list()) else list()
+    current  <- pw_store[[iso]] %||% "oecd2026"
+
+    if (!identical(input$pw_current, current)) {
+      output$change_pw_msg <- renderUI(
+        tags$p(style = "color:#E63312;font-size:11px;margin:4px 0 0;", "Current password is incorrect."))
+      return()
+    }
+    if (!nzchar(input$pw_new) || nchar(input$pw_new) < 4) {
+      output$change_pw_msg <- renderUI(
+        tags$p(style = "color:#E63312;font-size:11px;margin:4px 0 0;", "New password must be at least 4 characters."))
+      return()
+    }
+    if (!identical(input$pw_new, input$pw_confirm)) {
+      output$change_pw_msg <- renderUI(
+        tags$p(style = "color:#E63312;font-size:11px;margin:4px 0 0;", "Passwords do not match."))
+      return()
+    }
+
+    dir.create("sessions", showWarnings = FALSE)
+    pw_store[[iso]] <- input$pw_new
+    saveRDS(pw_store, pw_file)
+    output$change_pw_msg <- renderUI(
+      tags$p(style = "color:#1F7A4D;font-size:11px;margin:4px 0 0;", "\u2713 Password updated successfully."))
+    Sys.sleep(1.5)
+    removeModal()
+  })
+
   # ── Session data ─────────────────────────────────────────────────────────────
   session_data <- reactiveValues(
     entries    = list(),
     notes      = list(),
     responses  = list(),
+    no_updates = list(),
     time_use_1 = NULL,
     time_use_2 = NULL
   )
@@ -346,7 +702,7 @@ server <- function(input, output, session) {
     req(credentials$authenticated, credentials$country)
     # Touch all fields to create reactive dependencies
     list(session_data$entries, session_data$notes, session_data$responses,
-         session_data$time_use_1, session_data$time_use_2)
+         session_data$no_updates, session_data$time_use_1, session_data$time_use_2)
     dir.create("sessions", showWarnings = FALSE)
     saveRDS(
       c(reactiveValuesToList(session_data),
@@ -429,48 +785,87 @@ server <- function(input, output, session) {
   })
 
   # ── Response-format HTML builder ─────────────────────────────────────────────
-  build_response_html <- function(resp, saved_resp = NULL) {
+  # Turn any http(s) URLs in a string into clickable links
+  linkify <- function(x) {
+    if (length(x) == 0) return(x)
+    ifelse(is.na(x), x,
+           gsub("(https?://[^\\s<>\"]+)",
+                "<a href='\\1' target='_blank' style='color:#009EDB;word-break:break-all;'>\\1</a>",
+                x, perl = TRUE))
+  }
+
+  build_response_html <- function(resp, saved_resp = NULL, prefill_resp = NULL) {
     oecd_rows <- paste(mapply(function(lbl, val) {
       paste0("<tr>",
              "<td style='font-size:11px;font-weight:600;color:#555;padding:3px 8px 3px 0;vertical-align:top;white-space:nowrap;'>", lbl, "</td>",
-             "<td style='font-size:11px;padding:3px 0;color:#333;'>", if (is.na(val)) "\u2014" else val, "</td>",
+             "<td style='font-size:11px;padding:3px 0;color:#333;'>", if (is.na(val)) "\u2014" else linkify(val), "</td>",
              "</tr>")
     }, resp$label$label, resp$label$response, SIMPLIFY = TRUE), collapse = "")
     oecd_html <- paste0("<table style='width:100%;border-collapse:collapse;'>", oecd_rows, "</table>")
 
-    safe_indic    <- gsub("\\.", "_", resp$indic)
-    country_rows  <- paste(sapply(seq_len(nrow(resp$response)), function(i) {
+    safe_indic <- gsub("\\.", "_", resp$indic)
+
+    # `disable_rest` becomes TRUE once a yes/no question is answered "No" on load,
+    # greying out and disabling every following response box.
+    disable_rest <- FALSE
+    parts <- character(nrow(resp$response))
+    for (i in seq_len(nrow(resp$response))) {
       q_lbl   <- resp$response$label[i]
       q_val   <- resp$response$response[i]
       inp_id  <- paste0("resp_", safe_indic, "_", i)
+      # Priority: session save > prefill > default
       pre_val <- if (!is.null(saved_resp) && !is.null(saved_resp[[as.character(i)]])) {
         saved_resp[[as.character(i)]]
+      } else if (!is.null(prefill_resp) && !is.null(prefill_resp[[as.character(i)]])) {
+        prefill_resp[[as.character(i)]]
       } else if (!is.na(q_val)) q_val else ""
-      if (is.na(q_val)) {
-        paste0("<div style='margin-bottom:8px;'>",
-               "<p style='font-size:11px;font-weight:600;color:#444;margin:0 0 3px;'>", q_lbl, "</p>",
-               "<input type='text' id='", inp_id, "' class='resp-input' data-idx='", i, "' ",
-               "value='", pre_val, "' placeholder='Enter response\u2026' ",
-               "style='width:100%;font-size:11px;border:1px solid #ccc;border-radius:3px;padding:4px 6px;box-sizing:border-box;'/>",
-               "</div>")
-      } else {
-        paste0("<div style='margin-bottom:6px;'>",
-               "<span style='font-size:11px;font-weight:600;color:#444;'>", q_lbl, ":</span> ",
-               "<span style='font-size:11px;color:#333;'>", q_val, "</span>",
-               "</div>")
-      }
-    }), collapse = "")
+      is_yesno <- grepl("\\(yes\\s*/\\s*no\\)", q_lbl, ignore.case = TRUE)
 
-    country_html <- paste0(
-      country_rows,
-      "<div style='margin-top:10px;'>",
-      "<button onclick=\"submitResponses('", resp$indic, "')\" ",
-      "style='background:#009EDB;color:white;border:none;padding:5px 14px;border-radius:4px;cursor:pointer;font-size:12px;'>",
-      "&#10003; Submit responses</button>",
-      "<span id='resp_status_", safe_indic, "' style='margin-left:10px;font-size:11px;color:green;'></span>",
-      "</div>"
-    )
-    list(oecd = oecd_html, country = country_html)
+      dis_attr  <- if (disable_rest) " disabled" else ""
+      dis_style <- if (disable_rest) "opacity:0.45;background:#f0f0f0;" else ""
+
+      # Escape HTML entities for safe embedding in textarea content
+      safe_pre_val <- gsub("&", "&amp;", pre_val, fixed = TRUE)
+      safe_pre_val <- gsub("<", "&lt;", safe_pre_val, fixed = TRUE)
+      safe_pre_val <- gsub(">", "&gt;", safe_pre_val, fixed = TRUE)
+
+      if (is.na(q_val) && is_yesno) {
+        yes_active <- if (identical(tolower(pre_val), "yes")) " active" else ""
+        no_active  <- if (identical(tolower(pre_val), "no"))  " active" else ""
+        parts[i] <- paste0(
+          "<div style='margin-bottom:8px;", dis_style, "'>",
+          "<p style='font-size:11px;font-weight:600;color:#444;margin:0 0 4px;'>", q_lbl, "</p>",
+          "<input type='hidden' id='", inp_id, "' class='resp-input' data-idx='", i, "' value='", pre_val, "'/>",
+          "<div class='toggle-group'>",
+          "<button type='button'", dis_attr, " class='toggle-btn", yes_active, "' onclick=\"setToggle('", inp_id, "', this, 'Yes')\">Yes</button>",
+          "<button type='button'", dis_attr, " class='toggle-btn", no_active, "' onclick=\"setToggle('", inp_id, "', this, 'No')\">No</button>",
+          "</div></div>"
+        )
+        # If this yes/no is answered "No", disable everything that follows
+        if (identical(tolower(pre_val), "no")) disable_rest <- TRUE
+      } else if (is.na(q_val)) {
+        parts[i] <- paste0(
+          "<div style='margin-bottom:8px;'>",
+          "<p style='font-size:11px;font-weight:600;color:#444;margin:0 0 3px;", dis_style, "'>", q_lbl, "</p>",
+          "<textarea id='", inp_id, "' class='resp-input resp-textarea' data-idx='", i, "'", dis_attr, " ",
+          "placeholder='Enter response\u2026' rows='1' ",
+          "style='width:100%;font-size:11px;border:1px solid #ccc;border-radius:4px;padding:6px 8px;",
+          "box-sizing:border-box;resize:vertical;overflow:hidden;line-height:1.5;font-family:inherit;",
+          "min-height:32px;transition:min-height 0.15s ease;", dis_style, "'>",
+          safe_pre_val, "</textarea>",
+          "</div>"
+        )
+      } else {
+        parts[i] <- paste0(
+          "<div style='margin-bottom:6px;'>",
+          "<span style='font-size:11px;font-weight:600;color:#444;'>", q_lbl, ":</span> ",
+          "<span style='font-size:11px;color:#333;'>", linkify(q_val), "</span>",
+          "</div>"
+        )
+      }
+    }
+
+    list(oecd = oecd_html, country = paste(parts, collapse = ""))
   }
 
   resp_by_indic <- setNames(xlsx_response_format, sapply(xlsx_response_format, `[[`, "indic"))
@@ -490,9 +885,9 @@ server <- function(input, output, session) {
       mutate(time_period = as.numeric(time_period))
 
     # Inline ECharts chart HTML builder (for all non-time-use measures)
-    make_year_chart <- function(m) {
+    make_year_chart <- function(m, prefix = "") {
       all_years    <- 2004:2026
-      safe         <- gsub("\\.", "_", m)
+      safe         <- paste0(prefix, gsub("\\.", "_", m))
       cv           <- val_lookup %>% filter(measure == m)
       country_vals <- sapply(all_years, function(yr) {
         row <- cv %>% filter(time_period == yr)
@@ -525,14 +920,18 @@ server <- function(input, output, session) {
       )
     }
 
-    # Build chart HTML for ALL non-time-use measures (used in coverage mode for xlsx too)
-    year_charts_lookup <- setNames(
-      lapply(unique(measure_list$measure), function(m) {
-        if (m %in% time_use_measures) return("")
-        make_year_chart(m)
-      }),
-      unique(measure_list$measure)
-    )
+    # Build chart lookups with prefixed IDs for each heatmap
+    make_charts_lookup <- function(prefix) {
+      setNames(
+        lapply(unique(measure_list$measure), function(m) {
+          if (m %in% time_use_measures) return("")
+          make_year_chart(m, prefix)
+        }),
+        unique(measure_list$measure)
+      )
+    }
+    sub_charts_lookup <- make_charts_lookup("sub_")
+    cov_charts_lookup <- make_charts_lookup("cov_")
 
     # dat_tidy: full grid of measures × years
     dat_tidy <- d %>%
@@ -682,21 +1081,22 @@ server <- function(input, output, session) {
       unique(dat_tidy$measure)
     )
 
+    # Load prefill responses for this country (if available)
+    country_iso <- credentials$country
+    prefill_for_country <- country_prefill[[country_iso]]
+
     response_html_lookup <- setNames(
       lapply(unique(dat_tidy$measure), function(m) {
         if (!m %in% xlsx_measures || is.null(resp_by_indic[[m]]))
           return(list(oecd = "", country = ""))
-        build_response_html(resp_by_indic[[m]], session_data$responses[[m]])
+        build_response_html(
+          resp_by_indic[[m]],
+          saved_resp   = session_data$responses[[m]],
+          prefill_resp = if (!is.null(prefill_for_country)) prefill_for_country[[m]] else NULL
+        )
       }),
       unique(dat_tidy$measure)
     )
-
-    completeness_df <- dat_tidy %>%
-      filter(!measure %in% time_use_measures) %>%
-      group_by(measure, cat) %>%
-      summarise(has_data = any(!is.na(obs_value)), .groups = "drop") %>%
-      group_by(cat) %>%
-      summarise(n_total = n(), n_missing = sum(!has_data), .groups = "drop")
 
     submitted_df <- if (length(entries) > 0) {
       bind_rows(lapply(names(entries), function(m) {
@@ -713,13 +1113,40 @@ server <- function(input, output, session) {
       data.frame(measure = character(), time_period = numeric(), submitted = logical())
     }
 
+    # Measures that already have at least one submitted country-average value
+    submitted_measures <- names(entries)[vapply(names(entries), function(m) {
+      ca <- entries[[m]][["country_avg"]]
+      !is.null(ca) && any(vapply(ca, function(v) !is.null(v) && !is.na(v) && v != "", logical(1)))
+    }, logical(1))]
+
+    # Measures marked "no data update to declare"
+    no_update_measures <- names(session_data$no_updates)[
+      vapply(session_data$no_updates, isTRUE, logical(1))
+    ]
+
+    # Combined: measures that are "done" (either submitted or no-update)
+    done_measures <- union(submitted_measures, no_update_measures)
+
     # ── Pipeline helper: build heatmap HTML ────────────────────────────────────
     # coverage_mode = TRUE  → show all measures, all read-only, no ⚠ badge
     # coverage_mode = FALSE → show only xlsx_measures, with data entry
+    #   For EU-SILC countries, eu_silc_measures are excluded from submissions
+    is_eu_silc_country <- credentials$country %in% eu_silc_countries
+
     build_heatmap_html <- function(coverage_mode) {
 
+      # Prefix IDs to avoid duplicates between the two heatmaps
+      id_prefix <- if (coverage_mode) "cov_" else "sub_"
+
+      # Determine which measures to show on the submissions tab
+      submission_measures <- if (!coverage_mode && is_eu_silc_country) {
+        setdiff(xlsx_measures, eu_silc_measures)
+      } else {
+        xlsx_measures
+      }
+
       base <- dat_tidy %>%
-        { if (!coverage_mode) filter(., measure %in% xlsx_measures) else . } %>%
+        { if (!coverage_mode) filter(., measure %in% submission_measures) else . } %>%
         mutate(time_period = as.numeric(time_period)) %>%
         left_join(submitted_df, by = c("measure", "time_period")) %>%
         mutate(
@@ -745,15 +1172,15 @@ server <- function(input, output, session) {
         left_join(defs_lookup, by = "measure") %>%
         arrange(cat) %>%
         mutate(
-          # In coverage mode: all measures are read-only (even xlsx)
+          # In coverage mode: all measures are read-only (even xlsx / time-use)
           needs_input    = if (coverage_mode) FALSE else measure %in% xlsx_measures,
-          is_time_use    = measure %in% time_use_measures,
-          safe_id        = gsub("\\.", "_", measure),
+          is_time_use    = if (coverage_mode) FALSE else measure %in% time_use_measures,
+          safe_id        = paste0(id_prefix, gsub("\\.", "_", measure)),
           year_inputs    = unlist(year_inputs_lookup[measure]),
-          year_chart     = unlist(year_charts_lookup[measure]),
+          year_chart     = unlist((if (coverage_mode) cov_charts_lookup else sub_charts_lookup)[measure]),
           oecd_q_html    = sapply(measure, function(m) response_html_lookup[[m]]$oecd),
           country_q_html = sapply(measure, function(m) response_html_lookup[[m]]$country),
-          def_text       = replace_na(definition, "Definition to be added."),
+          def_text       = linkify(replace_na(definition, "Definition to be added.")),
           tech_name      = replace_na(indicator,  "\u2014"),
           unit_text      = replace_na(unit,       "\u2014"),
 
@@ -767,13 +1194,14 @@ server <- function(input, output, session) {
             is_time_use ~ "#f0faff",
             TRUE        ~ ""
           ),
-          # No ⚠ badge in coverage mode
+          # Only show the "data update requested" flag on submissions, and only
+          # while a measure has not yet been submitted. No badges in coverage mode.
+          is_done = measure %in% done_measures,
           badge_html = case_when(
-            !coverage_mode & needs_input ~
-              "<span title='New data required' style='font-size:9px;background:#F89C1C;color:white;border-radius:3px;padding:1px 4px;white-space:nowrap;'>&#9888; Data update requested</span>",
-            is_time_use ~
-              "<span title='Time use tables' style='font-size:9px;background:#009EDB;color:white;border-radius:3px;padding:1px 4px;white-space:nowrap;'>&#128203; Time use tables</span>",
-            TRUE ~ ""
+            coverage_mode ~ "",
+            !needs_input  ~ "",
+            is_done       ~ "<span style='font-size:9px;background:#1F7A4D;color:white;border-radius:3px;padding:1px 4px;white-space:nowrap;'>&#10003; Complete</span>",
+            TRUE          ~ "<span title='New data required' style='font-size:9px;background:#F89C1C;color:white;border-radius:3px;padding:1px 4px;white-space:nowrap;'>&#9888; Awaiting data input</span>"
           ),
           panel_border = case_when(
             needs_input ~ "border-left:3px solid #F89C1C;",
@@ -781,8 +1209,11 @@ server <- function(input, output, session) {
             TRUE        ~ "border-left:3px solid #D4D9DF;"
           ),
 
-          panel_body = mapply(function(ni, itu, sid, mn, yi, yc, q, oqh, cqh, def, tech, unt, lbl) {
+          is_no_update = measure %in% no_update_measures,
+
+          panel_body = mapply(function(ni, itu, sid, mn, yi, yc, q, oqh, cqh, def, tech, unt, lbl, is_nu) {
             if (ni) {
+              nu_active <- if (is_nu) " active" else ""
               paste0(
                 "<div style='display:flex;flex-direction:row;gap:16px;'>",
                 "<div style='flex:1;overflow:auto;'><strong style='font-size:13px;'>OECD Question Format</strong>",
@@ -794,11 +1225,16 @@ server <- function(input, output, session) {
                 "<div style='width:100%;'>",
                 "<strong style='font-size:13px;'>Enter Data</strong>",
                 "<div id='inputs_", sid, "' style='display:flex;flex-direction:row;flex-wrap:wrap;margin-top:8px;'>", yi, "</div>",
-                "<div style='margin-top:8px;'>",
+                "<div style='margin-top:10px;display:flex;align-items:center;flex-wrap:wrap;gap:8px;'>",
                 "<button onclick=\"submitMeasure('", sid, "','", mn, "')\" ",
-                "style='background:#009EDB;color:white;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;font-size:12px;'>",
-                "&#10003; Submit</button>",
-                "<span id='status_", sid, "' style='margin-left:10px;font-size:11px;color:green;'></span>",
+                "style='background:#009EDB;color:white;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;'>",
+                "&#10003; Submit data</button>",
+                "<span style='font-size:11px;color:#888;'>or</span>",
+                "<button id='noupdate_", sid, "' onclick=\"declareNoUpdate('", sid, "','", mn, "')\" ",
+                "class='no-update-btn", nu_active, "' ",
+                "style='background:#f5f5f5;color:#555;border:1px solid #ccc;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:11px;'>",
+                "No data update to declare</button>",
+                "<span id='status_", sid, "' style='margin-left:4px;font-size:11px;color:green;'></span>",
                 "</div></div>"
               )
             } else if (itu) {
@@ -841,7 +1277,7 @@ server <- function(input, output, session) {
               )
             }
           }, needs_input, is_time_use, safe_id, measure, year_inputs, year_chart, question,
-          oecd_q_html, country_q_html, def_text, tech_name, unit_text, label,
+          oecd_q_html, country_q_html, def_text, tech_name, unit_text, label, is_no_update,
           SIMPLIFY = TRUE, USE.NAMES = FALSE),
 
           row_html = paste0(
@@ -862,40 +1298,24 @@ server <- function(input, output, session) {
         group_by(cat, group) %>%
         summarise(rows_html = paste(row_html, collapse = ""), .groups = "drop") %>%
         arrange(cat) %>%
-        left_join(completeness_df, by = "cat") %>%
         mutate(
           section = if_else(cat <= 11, "Current Well-Being", "Future Well-Being"),
 
-          comp_tag = mapply(function(nm, nt) {
-            if (is.na(nm) || is.na(nt) || nt == 0) return("")
-            have     <- nt - nm
-            pct      <- round(100 * have / nt)
-            fill_cls <- if (nm == 0) "comp-fill comp-full" else "comp-fill"
-            lbl_cls  <- if (nm == 0) "comp-label comp-ok"  else "comp-label comp-warn"
-            tip      <- if (nm == 0) paste0("All ", nt, " indicators have data")
-                        else paste0(nm, " of ", nt, " indicators missing data")
-            paste0("<div class='comp-wrap' title='", tip, "'>",
-                   "<div class='comp-bar'><div class='", fill_cls, "' style='width:", pct, "%'></div></div>",
-                   "<span class='", lbl_cls, "'>", have, "/", nt, "</span>",
-                   "<span class='comp-tooltip'>", if (nm == 0) "complete" else "indicators", "</span>",
-                   "</div>")
-          }, n_missing, n_total, SIMPLIFY = TRUE),
-
-          group_html = mapply(function(grp, ct) {
+          group_html = vapply(group, function(grp) {
             icon_src <- group_icons[grp]
             icon_tag <- if (!is.na(icon_src))
               paste0("<img src='", icon_src, "' style='height:22px;width:22px;margin-right:7px;vertical-align:middle;object-fit:contain;'/>")
             else ""
-            paste0("<div class='dim-header'><h4>", icon_tag, grp, "</h4>", ct, "</div>")
-          }, group, comp_tag, SIMPLIFY = TRUE),
+            paste0("<div class='dim-header'><h4>", icon_tag, grp, "</h4></div>")
+          }, character(1)),
 
           prev_section = lag(section, default = ""),
           section_div  = if_else(
             section != prev_section,
             paste0("<div class='wb-section-header'>",
                    if_else(section == "Current Well-Being",
-                           "&#9679;&nbsp; Current Well-Being",
-                           "&#9651;&nbsp; Future Well-Being"), "</div>"),
+                           "&nbsp; Current Well-Being",
+                           "&nbsp; Future Well-Being"), "</div>"),
             ""
           ),
           full_html = paste0(section_div, group_html, rows_html, axis_row)
@@ -914,9 +1334,11 @@ server <- function(input, output, session) {
   observeEvent(input$submitted_data, {
     d <- input$submitted_data
     session_data$entries[[d$measure]] <- d$values
+    # Country Question Format responses are submitted alongside the data
+    if (!is.null(d$responses)) session_data$responses[[d$measure]] <- d$responses
     runjs(paste0("
-      var el = document.getElementById('status_", gsub("\\.", "_", input$submitted_data$measure), "');
-      if(el) { el.innerText = '\\u2713 Saved at ", format(Sys.time(), "%H:%M:%S"), "'; }
+      var el = document.getElementById('status_", d$safe_id, "');
+      if(el) { el.style.color = '#1F7A4D'; el.innerText = '\\u2713 Saved at ", format(Sys.time(), "%H:%M:%S"), "'; }
     "))
   })
 
@@ -924,18 +1346,24 @@ server <- function(input, output, session) {
     d <- input$submitted_note
     session_data$notes[[d$measure]] <- d$note
     runjs(paste0("
-      var el = document.getElementById('note_status_", gsub("\\.", "_", input$submitted_note$measure), "');
+      var el = document.getElementById('note_status_", d$safe_id, "');
       if(el) { el.innerText = '\\u2713 Saved at ", format(Sys.time(), "%H:%M:%S"), "'; }
     "))
   })
 
-  observeEvent(input$submitted_responses, {
-    d    <- input$submitted_responses
-    safe <- gsub("\\.", "_", d$measure)
-    session_data$responses[[d$measure]] <- d$values
+  observeEvent(input$no_update_declared, {
+    d <- input$no_update_declared
+    session_data$no_updates[[d$measure]] <- d$active
     runjs(paste0("
-      var el = document.getElementById('resp_status_", safe, "');
-      if(el) { el.innerText = '\\u2713 Saved at ", format(Sys.time(), "%H:%M:%S"), "'; }
+      var el = document.getElementById('status_", d$safe_id, "');
+      if(el) {
+        if(", tolower(d$active), ") {
+          el.style.color = '#1F7A4D';
+          el.innerText = '\\u2713 Marked as no update at ", format(Sys.time(), "%H:%M:%S"), "';
+        } else {
+          el.innerText = '';
+        }
+      }
     "))
   })
 
@@ -947,6 +1375,262 @@ server <- function(input, output, session) {
       var el = document.getElementById('status_", d$table, "');
       if(el) { el.innerText = '\\u2713 Saved at ", format(Sys.time(), "%H:%M:%S"), "'; }
     "))
+  })
+
+  # ── Admin tab ───────────────────────────────────────────────────────────────
+  admin_auth <- reactiveVal(FALSE)
+
+  observeEvent(input$admin_login_btn, {
+    if (identical(input$admin_password, "admin2026")) {
+      admin_auth(TRUE)
+      shinyjs::hide("admin_login_gate")
+      shinyjs::show("admin_panel")
+
+      # Populate country filter from available session files
+      rds_files <- list.files("sessions", pattern = "^[A-Z]{3}\\.rds$", full.names = FALSE)
+      isos      <- sub("\\.rds$", "", rds_files)
+      names(isos) <- countrycode::countrycode(isos, "iso3c", "country.name", warn = FALSE)
+      choices <- c("All countries" = "ALL", sort(setNames(isos, names(isos))))
+      updateSelectInput(session, "admin_country_filter", choices = choices)
+    } else {
+      output$admin_login_error <- renderUI(
+        tags$p(style = "color:#E63312;font-size:12px;", "Incorrect admin password.")
+      )
+    }
+  })
+
+  # Read all session files and assemble into tidy tables
+  admin_all_data <- reactive({
+    req(admin_auth())
+    # Re-read every time the reactive fires (invalidated by table selection / filter)
+    input$admin_country_filter
+    input$admin_table_select
+
+    rds_files <- list.files("sessions", pattern = "^[A-Z]{3}\\.rds$", full.names = TRUE)
+    empty <- list(entries = data.frame(), notes = data.frame(),
+                  responses = data.frame(), tu1 = data.frame(),
+                  tu2 = data.frame(), feedback = data.frame())
+    if (length(rds_files) == 0) return(empty)
+
+    all_entries   <- list()
+    all_notes     <- list()
+    all_responses <- list()
+    all_tu1       <- list()
+    all_tu2       <- list()
+
+    for (f in rds_files) {
+      iso <- sub("\\.rds$", "", basename(f))
+      s   <- tryCatch(readRDS(f), error = function(e) NULL)
+      if (is.null(s)) next
+      cname <- countrycode::countrycode(iso, "iso3c", "country.name", warn = FALSE)
+
+      # Entries
+      if (!is.null(s$entries) && length(s$entries) > 0) {
+        for (m in names(s$entries)) {
+          row_data <- s$entries[[m]]
+          if (!is.list(row_data)) next
+          for (rk in names(row_data)) {
+            yr_data <- row_data[[rk]]
+            if (!is.list(yr_data)) next
+            for (yr in names(yr_data)) {
+              v <- yr_data[[yr]]
+              if (!is.null(v) && !is.na(v) && v != "") {
+                all_entries[[length(all_entries) + 1]] <-
+                  data.frame(country = cname, iso = iso, measure = m,
+                             row_type = rk, year = as.integer(yr),
+                             value = as.numeric(v), stringsAsFactors = FALSE)
+              }
+            }
+          }
+        }
+      }
+
+      # Notes
+      if (!is.null(s$notes) && length(s$notes) > 0) {
+        for (m in names(s$notes)) {
+          n <- s$notes[[m]]
+          if (!is.null(n) && nzchar(n)) {
+            all_notes[[length(all_notes) + 1]] <-
+              data.frame(country = cname, iso = iso, measure = m,
+                         note = n, stringsAsFactors = FALSE)
+          }
+        }
+      }
+
+      # Responses
+      if (!is.null(s$responses) && length(s$responses) > 0) {
+        for (m in names(s$responses)) {
+          resp <- s$responses[[m]]
+          if (!is.list(resp)) next
+          for (idx in names(resp)) {
+            val <- resp[[idx]]
+            if (!is.null(val) && nzchar(val)) {
+              all_responses[[length(all_responses) + 1]] <-
+                data.frame(country = cname, iso = iso, measure = m,
+                           question_index = as.integer(idx), response = val,
+                           stringsAsFactors = FALSE)
+            }
+          }
+        }
+      }
+
+      # Time-use helper
+      parse_tu <- function(tu) {
+        if (is.null(tu) || !is.list(tu)) return(data.frame())
+        rows <- list()
+        for (rk in names(tu)) {
+          cols <- tu[[rk]]
+          if (!is.list(cols)) next
+          for (ck in names(cols)) {
+            val <- cols[[ck]]
+            if (!is.null(val) && nzchar(val)) {
+              rows[[length(rows) + 1]] <-
+                data.frame(country = cname, iso = iso,
+                           row = as.integer(rk), col = ck, value = val,
+                           stringsAsFactors = FALSE)
+            }
+          }
+        }
+        if (length(rows) > 0) bind_rows(rows) else data.frame()
+      }
+
+      tu1 <- parse_tu(s$time_use_1)
+      tu2 <- parse_tu(s$time_use_2)
+      if (nrow(tu1) > 0) all_tu1[[length(all_tu1) + 1]] <- tu1
+      if (nrow(tu2) > 0) all_tu2[[length(all_tu2) + 1]] <- tu2
+    }
+
+    # Load feedback
+    fb_file <- file.path("sessions", "feedback.rds")
+    fb_df <- if (file.exists(fb_file)) {
+      fb_list <- tryCatch(readRDS(fb_file), error = function(e) list())
+      if (length(fb_list) > 0) {
+        bind_rows(lapply(fb_list, function(fb) {
+          cname <- countrycode::countrycode(fb$country, "iso3c", "country.name", warn = FALSE)
+          data.frame(
+            country   = if (!is.na(cname)) cname else fb$country,
+            iso       = fb$country,
+            timestamp = format(fb$timestamp, "%Y-%m-%d %H:%M:%S"),
+            message   = fb$message,
+            stringsAsFactors = FALSE
+          )
+        }))
+      } else data.frame()
+    } else data.frame()
+
+    list(
+      entries   = if (length(all_entries)   > 0) bind_rows(all_entries)   else data.frame(country = character(), iso = character(), measure = character(), row_type = character(), year = integer(), value = numeric()),
+      notes     = if (length(all_notes)     > 0) bind_rows(all_notes)     else data.frame(country = character(), iso = character(), measure = character(), note = character()),
+      responses = if (length(all_responses) > 0) bind_rows(all_responses) else data.frame(country = character(), iso = character(), measure = character(), question_index = integer(), response = character()),
+      tu1       = if (length(all_tu1)       > 0) bind_rows(all_tu1)       else data.frame(country = character(), iso = character(), row = integer(), col = character(), value = character()),
+      tu2       = if (length(all_tu2)       > 0) bind_rows(all_tu2)       else data.frame(country = character(), iso = character(), row = integer(), col = character(), value = character()),
+      feedback  = if (nrow(fb_df) > 0) fb_df else data.frame(country = character(), iso = character(), timestamp = character(), message = character())
+    )
+  })
+
+  # Filtered view based on country + table selection
+  admin_filtered <- reactive({
+    req(admin_auth())
+    all_data  <- admin_all_data()
+    tbl_name  <- input$admin_table_select %||% "entries"
+    country_f <- input$admin_country_filter %||% "ALL"
+
+    df <- all_data[[tbl_name]]
+    if (is.null(df) || nrow(df) == 0) return(df)
+    if (country_f != "ALL") df <- df[df$iso == country_f, , drop = FALSE]
+    df
+  })
+
+  output$admin_data_table <- DT::renderDataTable({
+    df <- admin_filtered()
+    if (is.null(df) || nrow(df) == 0) {
+      return(DT::datatable(data.frame(Message = "No submissions found."),
+                           options = list(dom = "t"), rownames = FALSE))
+    }
+    # Drop the iso column for display
+    display_df <- df[, setdiff(names(df), "iso"), drop = FALSE]
+    DT::datatable(display_df, rownames = FALSE, filter = "top",
+                  options = list(pageLength = 25, scrollX = TRUE))
+  })
+
+  output$admin_download_csv <- downloadHandler(
+    filename = function() {
+      tbl  <- input$admin_table_select %||% "entries"
+      iso  <- input$admin_country_filter %||% "ALL"
+      paste0("submissions_", tbl, "_", iso, "_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      df <- admin_filtered()
+      if (is.null(df)) df <- data.frame()
+      write.csv(df, file, row.names = FALSE)
+    }
+  )
+
+  # ── Admin reset: two-click confirmation ────────────────────────────────────
+  admin_reset_confirm <- reactiveVal(FALSE)
+
+  observeEvent(input$admin_reset_btn, {
+    if (!admin_reset_confirm()) {
+      # First click: ask for confirmation
+      admin_reset_confirm(TRUE)
+      output$admin_reset_feedback <- renderUI(
+        tags$div(
+          style = "display:flex;align-items:center;gap:10px;",
+          actionButton("admin_reset_confirm_btn", "Yes, delete everything",
+                       style = "background:#E63312;color:white;border:none;font-weight:600;font-size:12px;"),
+          actionButton("admin_reset_cancel_btn", "Cancel",
+                       style = "font-size:12px;"),
+          tags$span(style = "color:#E63312;font-size:12px;font-weight:600;",
+                    "Are you sure? This cannot be undone.")
+        )
+      )
+    }
+  })
+
+  observeEvent(input$admin_reset_cancel_btn, {
+    admin_reset_confirm(FALSE)
+    output$admin_reset_feedback <- renderUI(NULL)
+  })
+
+  observeEvent(input$admin_reset_confirm_btn, {
+    req(admin_auth())
+    # Delete all country session files
+    rds_files <- list.files("sessions", pattern = "^[A-Z]{3}\\.rds$", full.names = TRUE)
+    n_deleted <- 0
+    for (f in rds_files) {
+      tryCatch({ file.remove(f); n_deleted <- n_deleted + 1 },
+               error = function(e) NULL)
+    }
+    admin_reset_confirm(FALSE)
+    output$admin_reset_feedback <- renderUI(
+      tags$p(style = "color:#1F7A4D;font-size:12px;font-weight:600;",
+             paste0("\u2713 Deleted ", n_deleted, " session file(s) at ",
+                    format(Sys.time(), "%H:%M:%S"), "."))
+    )
+  })
+
+  # ── Feedback handler ─────────────────────────────────────────────────────────
+  observeEvent(input$send_feedback_btn, {
+    fb_text <- input$feedback_text
+    if (is.null(fb_text) || !nzchar(trimws(fb_text))) {
+      output$feedback_status <- renderUI(
+        tags$span(style = "font-size:11px;color:#E63312;", "Please enter some feedback first."))
+      return()
+    }
+    dir.create("sessions", showWarnings = FALSE)
+    fb_file <- file.path("sessions", "feedback.rds")
+    existing <- if (file.exists(fb_file)) tryCatch(readRDS(fb_file), error = function(e) list()) else list()
+    existing[[length(existing) + 1]] <- list(
+      country   = credentials$country %||% "unknown",
+      timestamp = Sys.time(),
+      message   = fb_text
+    )
+    saveRDS(existing, fb_file)
+    # Clear the textarea
+    runjs("document.getElementById('feedback_text').value = '';")
+    output$feedback_status <- renderUI(
+      tags$span(style = "font-size:11px;color:#1F7A4D;font-weight:600;",
+                paste0("\u2713 Thank you! Feedback received at ", format(Sys.time(), "%H:%M:%S"), ".")))
   })
 
 }
