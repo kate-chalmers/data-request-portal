@@ -66,6 +66,14 @@ shared_head <- tagList(
         values[row][yr] = inp.value === '' ? null : parseFloat(inp.value);
         inp.style.border = '1px solid #ccc';
       });
+      // Collect data flags (B, E, P, etc.)
+      var flags = {};
+      container.querySelectorAll('.flag-select').forEach(function(sel) {
+        var row = sel.dataset.row || 'country_avg';
+        var yr  = sel.dataset.year;
+        if (!flags[row]) flags[row] = {};
+        if (sel.value !== '') flags[row][yr] = sel.value;
+      });
       // Also collect the Country Question Format responses from this panel
       var panel = document.getElementById('panel_' + safe_id);
       var responses = {};
@@ -75,7 +83,7 @@ shared_head <- tagList(
         });
       }
       Shiny.setInputValue('submitted_data',
-        { measure: measure, safe_id: safe_id, values: values, responses: responses,
+        { measure: measure, safe_id: safe_id, values: values, flags: flags, responses: responses,
           timestamp: new Date().toISOString() },
         {priority: 'event'});
     }
@@ -109,6 +117,38 @@ shared_head <- tagList(
         { measure: measure, safe_id: safe_id, active: isActive,
           timestamp: new Date().toISOString() },
         {priority: 'event'});
+    }
+
+    function declareTUNoUpdate() {
+      var btn = document.getElementById('tu_no_update_btn');
+      var isActive = btn.classList.toggle('active');
+      Shiny.setInputValue('tu_no_update_declared',
+        { active: isActive, timestamp: new Date().toISOString() },
+        {priority: 'event'});
+    }
+
+    function toggleAdminLogin() {
+      var countryRow = document.getElementById('login_country_row');
+      var adminBack  = document.getElementById('admin_back_link');
+      var adminLink  = document.getElementById('admin_link');
+      var loginTitle = document.getElementById('login_title');
+      var loginDesc  = document.getElementById('login_desc');
+      var isAdmin = countryRow.style.display === 'none';
+      if (isAdmin) {
+        countryRow.style.display = 'block';
+        adminLink.style.display  = 'block';
+        adminBack.style.display  = 'none';
+        loginTitle.textContent = 'OECD Well-being and Time Use Questionnaire Portal';
+        loginDesc.textContent  = 'Select your country and enter the access password.';
+        Shiny.setInputValue('login_mode', 'country');
+      } else {
+        countryRow.style.display = 'none';
+        adminLink.style.display  = 'none';
+        adminBack.style.display  = 'block';
+        loginTitle.textContent = 'Admin Access';
+        loginDesc.textContent  = 'Enter the admin password to view submitted data.';
+        Shiny.setInputValue('login_mode', 'admin');
+      }
     }
 
     // Yes/No toggle: set hidden value, highlight choice, and when 'No' is
@@ -164,10 +204,122 @@ shared_head <- tagList(
         document.querySelectorAll('.resp-textarea').forEach(autoResizeTextarea);
       }, 100);
     });
+  ")),
+  tags$script(HTML("
+    // ── Time Use Table 1: auto-summation & 1440 check ──────────────
+    (function() {
+      var groups = {
+        1:  [2, 3, 4, 5, 6, 7],
+        8:  [9, 10, 11, 14, 15, 16, 17],
+        18: [19, 20, 21],
+        22: [23, 24, 25, 26, 27],
+        28: [29, 30]
+      };
+      var subGroups = { 11: [12, 13] };
+      var totalRow = 31;
+      var groupRows = [1, 8, 18, 22, 28];
+      var numCols = [3, 4, 5];
+
+      function getVal(row, col) {
+        var t = document.getElementById('tu_table1');
+        if (!t) return NaN;
+        var inp = t.querySelector('input[data-row=\"' + row + '\"][data-col=\"' + col + '\"]');
+        if (!inp || inp.value === '') return NaN;
+        return parseFloat(inp.value);
+      }
+
+      function setVal(row, col, val) {
+        var t = document.getElementById('tu_table1');
+        if (!t) return;
+        var inp = t.querySelector('input[data-row=\"' + row + '\"][data-col=\"' + col + '\"]');
+        if (!inp) return;
+        inp.value = isNaN(val) ? '' : parseFloat(val.toFixed(4)).toString();
+      }
+
+      function setGroupSum(gr, col, val) {
+        var cell = document.querySelector('.group-sum-cell[data-group-row=\"' + gr + '\"][data-col=\"' + col + '\"]');
+        if (!cell) return;
+        cell.textContent = isNaN(val) ? '\\u2014' : parseFloat(val.toFixed(2)).toString();
+      }
+
+      function sumOf(rows, col) {
+        var s = 0, any = false;
+        for (var i = 0; i < rows.length; i++) {
+          var v = getVal(rows[i], col);
+          if (!isNaN(v)) { s += v; any = true; }
+        }
+        return any ? s : NaN;
+      }
+
+      function recalc() {
+        var ci, col, sg, gi, gs, grand, anyG;
+        for (ci = 0; ci < numCols.length; ci++) {
+          col = numCols[ci];
+          for (sg in subGroups) {
+            setVal(parseInt(sg), col, sumOf(subGroups[sg], col));
+          }
+          grand = 0; anyG = false;
+          for (gi = 0; gi < groupRows.length; gi++) {
+            gs = sumOf(groups[groupRows[gi]], col);
+            setGroupSum(groupRows[gi], col, gs);
+            if (!isNaN(gs)) { grand += gs; anyG = true; }
+          }
+          setVal(totalRow, col, anyG ? grand : NaN);
+        }
+        check1440();
+      }
+
+      function check1440() {
+        var t = document.getElementById('tu_table1');
+        var w = document.getElementById('tu1_1440_warning');
+        if (!t || !w) return;
+        var colNames = {3:'Total (15-64)', 4:'Men (15-64)', 5:'Women (15-64)'};
+        var issues = [];
+        for (var ci = 0; ci < numCols.length; ci++) {
+          var col = numCols[ci];
+          var inp = t.querySelector('input[data-row=\"' + totalRow + '\"][data-col=\"' + col + '\"]');
+          if (!inp || inp.value === '') continue;
+          var v = parseFloat(inp.value);
+          if (!isNaN(v) && Math.abs(v - 1440) > 0.5) {
+            issues.push(colNames[col] + ': ' + parseFloat(v.toFixed(2)));
+          }
+        }
+        if (issues.length > 0) {
+          w.style.display = 'block';
+          var d = document.getElementById('tu1_1440_detail');
+          if (d) d.textContent = 'Totals not equal to 1440 minutes: ' + issues.join(' | ');
+        } else {
+          w.style.display = 'none';
+        }
+      }
+
+      document.addEventListener('input', function(e) {
+        if (e.target.closest('#tu_table1') && e.target.classList.contains('tu-num') && !e.target.classList.contains('tu-computed')) {
+          recalc();
+        }
+      });
+
+      // Cap values at 0–1440 on blur
+      document.addEventListener('blur', function(e) {
+        if (!e.target.closest('#tu_table1') || !e.target.classList.contains('tu-num') || e.target.classList.contains('tu-computed')) return;
+        var v = parseFloat(e.target.value);
+        if (isNaN(v)) return;
+        var clamped = false;
+        if (v > 1440) { e.target.value = '1440'; clamped = true; }
+        if (v < 0)    { e.target.value = '0';    clamped = true; }
+        if (clamped) recalc();
+      }, true);
+
+      $(document).on('shiny:value', function(evt) {
+        if (evt.name === 'time_use_table1_ui') {
+          setTimeout(recalc, 200);
+        }
+      });
+    })();
   "))
 )
 
-# ── Reusable legend ───────────────────────────────────────────────────────────
+# ── Reusable legends ──────────────────────────────────────────────────────────
 heatmap_legend <- tags$div(
   style = "display:flex;gap:20px;font-size:11px;margin-bottom:10px;justify-content:center;align-items:center;color:#55606B;",
   tags$span(
@@ -184,13 +336,39 @@ heatmap_legend <- tags$div(
   )
 )
 
+coverage_legend <- tags$div(
+  style = "display:flex;flex-wrap:wrap;gap:16px;font-size:11px;margin-bottom:10px;justify-content:center;align-items:center;color:#55606B;",
+  tags$span(
+    tags$span(style = "display:inline-block;width:11px;height:11px;background:#1F7A4D;border-radius:2px;margin-right:5px;vertical-align:middle;"),
+    "Data available"
+  ),
+  tags$span(
+    style = "display:inline-flex;align-items:center;gap:4px;",
+    tags$span(style = "display:inline-block;width:11px;height:11px;background:#FDE8C8;border-radius:2px;vertical-align:middle;"),
+    tags$span(style = "display:inline-block;width:60px;height:11px;border-radius:2px;vertical-align:middle;background:linear-gradient(to right,#FDE8C8,#C0392B);"),
+    tags$span(style = "display:inline-block;width:11px;height:11px;background:#C0392B;border-radius:2px;vertical-align:middle;"),
+    tags$span(style = "margin-left:4px;", "Gap (few \u2192 many other countries have data)")
+  ),
+  tags$span(
+    tags$span(style = "display:inline-block;width:11px;height:11px;background:#D9DDE3;border:1px solid #c5cad0;border-radius:2px;margin-right:5px;vertical-align:middle;"),
+    "No data anywhere"
+  )
+)
+
 # ── Country choices ────────────────────────────────────────────────────────────
-login_country_choices <- c(
+# Sort by displayed English name, not ISO3C value
+.oecd_choices <- setNames(
+  oecd_countries,
+  countrycode::countrycode(oecd_countries, "iso3c", "country.name", warn = FALSE)
+)
+.partner_choices <- setNames(
+  partner_countries,
+  countrycode::countrycode(partner_countries, "iso3c", "country.name", warn = FALSE)
+)
+login_country_choices <- list(
   "\u2014 Select your country \u2014" = "",
-  sort(setNames(
-    oecd_countries,
-    countrycode::countrycode(oecd_countries, "iso3c", "country.name", warn = FALSE)
-  ))
+  "OECD countries" = as.list(.oecd_choices[order(names(.oecd_choices))]),
+  "Partner countries" = as.list(.partner_choices[order(names(.partner_choices))])
 )
 
 # ── UI ────────────────────────────────────────────────────────────────────────
@@ -217,14 +395,17 @@ ui <- tagList(
         img(src = "OECD_logo.svg", height = 34)
       ),
       tags$h4(
+        id = "login_title",
         style = "text-align:center;font-size:17px;color:#1F2B3A;font-weight:700;margin:0 0 6px;",
-        "How\u2019s Life? Data Request Portal"
+        "OECD Well-being and Time Use Questionnaire Portal"
       ),
       tags$p(
+        id = "login_desc",
         style = "text-align:center;font-size:12px;color:#55606B;margin:0 0 26px;line-height:1.5;",
         "Select your country and enter the access password."
       ),
       tags$div(
+        id = "login_country_row",
         style = "margin-bottom:14px;",
         tags$label("Country",
                    style = "font-size:11px;font-weight:600;color:#55606B;display:block;margin-bottom:5px;"),
@@ -240,7 +421,21 @@ ui <- tagList(
                    class  = "btn-primary",
                    style  = "width:100%;font-size:14px;padding:10px 0;font-weight:700;"),
       tags$div(style = "margin-top:12px;min-height:20px;text-align:center;",
-               uiOutput("login_error"))
+               uiOutput("login_error")),
+      tags$div(
+        id = "admin_link",
+        style = "text-align:center;margin-top:16px;",
+        tags$a(href = "#", onclick = "toggleAdminLogin(); return false;",
+               style = "font-size:11px;color:#888;text-decoration:none;",
+               "Admin access \u2192")
+      ),
+      tags$div(
+        id = "admin_back_link",
+        style = "text-align:center;margin-top:16px;display:none;",
+        tags$a(href = "#", onclick = "toggleAdminLogin(); return false;",
+               style = "font-size:11px;color:#888;text-decoration:none;",
+               "\u2190 Back to country login")
+      )
     )
   ),
 
@@ -260,7 +455,7 @@ ui <- tagList(
         id    = "main_navbar",
 
         # ── Tab 1: Data Submissions ────────────────────────────────────────
-        tabPanel("Data Submissions",
+        tabPanel("Well-being Data Submissions",
           fluidPage(
             fluidRow(
               column(1),
@@ -276,9 +471,9 @@ ui <- tagList(
                     How's Life? publication series</a>,
                     the <a href='https://www.oecd.org/en/data/tools/well-being-data-monitor.html'>OECD Well-being Data Monitor</a>
                     and annually updated <a href=''>well-being country profiles</a>.<br><br> The OECD Well-being Database includes over 80 indicators, the majority 
-                    of which are sourced from other OECD and external international data collections. To ensure a streamlined process, this questionnaire covers the 
+                    of which are sourced from other OECD and external international data collections. <b>To ensure a streamlined process, this questionnaire covers ONLY the 
                     indicators that are unique to the OECD Well-being Database as well as relevant information for the OECD Time Use Database. It therefore 
-                    excludes indicators that are managed through other OECD data collection activities, or by other external international data producers. All types of 
+                    excludes indicators that are managed through other OECD data collection activities, or by other external international data producers.</b> All types of 
                     offical surveys are of interest to this exercise, including (but not limited to) household surveys, health surveys, general social surveys, time-use 
                     surveys and ad hoc surveys.
                     <br><br>
@@ -308,6 +503,7 @@ ui <- tagList(
                             tags$b("grey"), "= no data."),
                     tags$li("Click any indicator row to expand its panel, enter values, and press",
                             tags$b("\u2713 Submit"), "to save."),
+                    tags$li("Data and responses are pre-filled with previous submissions but can be overwritten."),
                     tags$li("Your progress is", tags$b("auto-saved"), "and will be restored if you log out and back in."),
                     tags$li("Indicators marked", tags$span(style = "font-size:9px;background:#F89C1C;color:white;border-radius:3px;padding:1px 4px;", "\u26A0 Awaiting data input"),
                             "still need your input.")
@@ -321,25 +517,75 @@ ui <- tagList(
               column(10, align = "center",
                 tags$div(class = "heatmap-content",
                   heatmap_legend,
-                  uiOutput("heatmap_submissions")
+                  shinycssloaders::withSpinner(uiOutput("heatmap_submissions"))
                 )
               ),
               column(1)
-            ) %>% shinycssloaders::withSpinner()
+            )
           )
         ),
 
         # ── Tab 3: Time Use ────────────────────────────────────────────────
-        tabPanel("Time Use",
+        tabPanel("Time Use Data Submissions",
           fluidPage(
-            br(),
             fluidRow(
               column(1),
               column(10,
-                h3("Time Use Survey Tables"),
-                p("For table 1 and 2 below, please provide supplemental data and information for your national time use surveys.",
-                  style = "color:#888;font-size:13px;"),
-                br(),
+                tags$div(class = "landing-hero",
+                  tags$div(class = "landing-logo-row",
+                    img(src = "wise_logo.png", height = 60),
+                    img(src = "OECD_logo.svg", height = 36)
+                  ),
+                  tags$p(HTML(
+                    "This section collects detailed time use data from national time use surveys.
+                    Table 1 gathers time spent on daily activities (in minutes per day), while
+                    Table 2 asks you to map your national activity codes to the OECD classification."
+                  ))
+                )
+              ),
+              column(1)
+            ),
+            fluidRow(
+              column(1),
+              column(10,
+                tags$div(
+                  style = paste0(
+                    "background:#f0f6ff;border:1px solid #c5d7ee;border-radius:8px;",
+                    "padding:16px 22px;margin-bottom:20px;font-size:12px;color:#1F2B3A;line-height:1.6;"
+                  ),
+                  tags$p(style = "font-weight:700;margin:0 0 6px;font-size:13px;", "Quick guide"),
+                  tags$ul(style = "margin:0;padding-left:18px;",
+                    tags$li("Table 1 collects time spent on daily activities in",
+                            tags$b("minutes per day"), "for the total population (15\u201364), men, and women."),
+                    tags$li("Group subtotals and the grand total are",
+                            tags$b("calculated automatically"), "from the values you enter."),
+                    tags$li("Subtotal rows (e.g. 2.3 Care for household members) are",
+                            tags$b("auto-summed"), "from their sub-categories (2.3.1 + 2.3.2)."),
+                    tags$li("The daily total should sum to",
+                            tags$b("1440 minutes"), "(24 hours). If it differs, you will be asked to provide a brief explanation."),
+                    tags$li("Table 2 asks you to map your national activity codes to each OECD activity category."),
+                    tags$li("Click", tags$b("\u2713 Submit table"), "to save each table separately.",
+                            "Your progress is", tags$b("auto-saved"), "and restored on your next login.")
+                  )
+                )
+              ),
+              column(1)
+            ),
+            fluidRow(
+              column(1),
+              column(10,
+                tags$div(
+                  style = "margin-bottom:18px;display:flex;align-items:center;gap:10px;",
+                  tags$button(
+                    id = "tu_no_update_btn",
+                    onclick = "declareTUNoUpdate()",
+                    class = "no-update-btn",
+                    style = "background:#f5f5f5;color:#555;border:1px solid #ccc;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:12px;",
+                    "No time use data update to declare"
+                  ),
+                  tags$span(id = "tu_no_update_status",
+                            style = "font-size:11px;color:#1F7A4D;font-weight:600;")
+                ),
                 fluidRow(
                   column(5,
                     tags$label("Survey name",
@@ -355,8 +601,28 @@ ui <- tagList(
                   )
                 ),
                 br(),
-                h4(HTML("Table 1. Time spent on daily activities (<u>minutes</u>)")),
+                h4(HTML("Table 1. Time spent on daily activities (<u>minutes per day</u>)")),
+                tags$p(style = "font-size:11px;color:#888;margin:-4px 0 4px;",
+                       "Blue-highlighted rows are calculated automatically. Enter values in the white rows only."),
                 uiOutput("time_use_table1_ui"),
+                tags$div(
+                  id = "tu1_1440_warning",
+                  style = paste0(
+                    "display:none;background:#FFF8E1;border:1px solid #F5C518;border-radius:8px;",
+                    "padding:14px 18px;margin-top:12px;margin-bottom:16px;"
+                  ),
+                  tags$div(
+                    style = "display:flex;align-items:center;gap:8px;margin-bottom:8px;",
+                    tags$span(style = "font-size:16px;color:#B8860B;", "\u26A0"),
+                    tags$span(id = "tu1_1440_detail",
+                              style = "font-size:12px;font-weight:600;color:#B8860B;",
+                              "Daily totals do not sum to 1440 minutes (24 hours).")
+                  ),
+                  tags$p(style = "font-size:11px;color:#666;margin:0 0 6px;",
+                         "This may be intentional (e.g. rounding, simultaneous activities, or survey methodology). Please provide a brief explanation:"),
+                  textAreaInput("tu1_explanation", label = NULL, value = "", width = "100%",
+                                rows = 2, placeholder = "Explain why the total differs from 1440 minutes\u2026")
+                ),
                 br(), br(),
                 h4("Table 2. Considering the activity coding list in the national time-use survey, please indicate which activity codes are grouped under each activity (e.g. 1.1. paid work)."),
                 uiOutput("time_use_table2_ui")
@@ -375,10 +641,14 @@ ui <- tagList(
                             tags$div(class = "landing-hero",
                                      tags$p(
                                        style = "margin:0;",
-                                       "Overview of all well-being indicators in the OECD",
+                                       "Overview of full set of well-being indicators in the OECD",
                                        tags$em("How\u2019s Life? Well-being Database"),
-                                       "and the current data coverage for your country.
-                     Click any indicator to view its time series."
+                                       "and the current data coverage for your country.",
+                                       tags$b("No action is needed from you on this page."),
+                                       "This tab is provided for reference only, to help you explore the full set of well-being indicators and see where data is currently available or missing.",
+                                       "Any data gaps shown here fall outside the scope of this questionnaire and are managed through other OECD data collection processes.", 
+                                       "Red-shaded cells indicate gaps where other countries have data - darker red means more countries have data for that year, highlighting higher-priority gaps.",
+                                       "Click any indicator to view its time series."
                                      )
                             )
                      ),
@@ -389,7 +659,7 @@ ui <- tagList(
                      column(1),
                      column(10, align = "center",
                             tags$div(class = "heatmap-content",
-                                     heatmap_legend,
+                                     coverage_legend,
                                      uiOutput("heatmap_coverage")
                             )
                      ),
@@ -398,78 +668,6 @@ ui <- tagList(
                  )
         ),
 
-        # ── Tab 4: Admin ───────────────────────────────────────────────────
-        tabPanel("Admin",
-          fluidPage(
-            br(),
-            fluidRow(
-              column(1),
-              column(10,
-                # ── Admin login gate ──────────────────────────────────────
-                tags$div(
-                  id = "admin_login_gate",
-                  style = "max-width:380px;margin:60px auto;text-align:center;",
-                  tags$h4("Admin Access", style = "font-weight:700;color:#1F2B3A;"),
-                  tags$p("Enter the admin password to view submitted data.",
-                         style = "font-size:12px;color:#55606B;margin-bottom:18px;"),
-                  passwordInput("admin_password", NULL, width = "100%",
-                                placeholder = "Admin password"),
-                  actionButton("admin_login_btn", "Unlock",
-                               class = "btn-primary",
-                               style = "width:100%;margin-top:8px;font-weight:600;"),
-                  uiOutput("admin_login_error", style = "margin-top:10px;")
-                ),
-
-                # ── Admin content (hidden until authenticated) ────────────
-                shinyjs::hidden(
-                  tags$div(
-                    id = "admin_panel",
-                    tags$h3("Submitted Data", style = "font-weight:700;margin-bottom:4px;"),
-                    tags$p("Data entered by countries via the portal.",
-                           style = "font-size:12px;color:#888;margin-bottom:16px;"),
-                    fluidRow(
-                      column(4,
-                        selectInput("admin_country_filter", "Country",
-                                    choices = c("All countries" = "ALL"),
-                                    width = "100%")
-                      ),
-                      column(4,
-                        selectInput("admin_table_select", "Table",
-                                    choices = c("Data entries" = "entries",
-                                                "Notes" = "notes",
-                                                "Responses" = "responses",
-                                                "Time-use table 1" = "tu1",
-                                                "Time-use table 2" = "tu2",
-                                                "Feedback" = "feedback"),
-                                    width = "100%")
-                      ),
-                      column(4, style = "padding-top:25px;",
-                        downloadButton("admin_download_csv", "Download CSV",
-                                       style = "width:100%;")
-                      )
-                    ),
-                    DT::dataTableOutput("admin_data_table"),
-
-                    # ── Reset all data ──────────────────────────────────
-                    tags$hr(style = "margin:30px 0 20px;border-color:#eee;"),
-                    tags$div(
-                      style = "display:flex;align-items:center;gap:16px;",
-                      actionButton("admin_reset_btn", "Reset All Submissions",
-                                   icon = icon("trash"),
-                                   style = "background:#E63312;color:white;border:none;font-weight:600;"),
-                      tags$span(
-                        style = "font-size:12px;color:#888;",
-                        "Permanently deletes all saved session files for every country."
-                      )
-                    ),
-                    uiOutput("admin_reset_feedback", style = "margin-top:10px;")
-                  )
-                )
-              ),
-              column(1)
-            )
-          )
-        )
       ), # end navbarPage
 
       # ── Page bottom padding ──────────────────────────────────────────
@@ -525,7 +723,72 @@ ui <- tagList(
         )
       )
     )   # end main_app div
-  )     # end hidden
+  ),    # end hidden (main_app)
+
+  # ── Admin app (hidden, accessed from login page) ──────────────────────────
+  shinyjs::hidden(
+    tags$div(
+      id = "admin_app",
+      style = "padding-top:20px;",
+      tags$div(
+        style = paste0(
+          "background:var(--oecd-navy);padding:12px 20px;display:flex;",
+          "align-items:center;justify-content:space-between;margin-bottom:20px;"
+        ),
+        tags$span(style = "color:white;font-weight:700;font-size:16px;",
+                  "OECD Well-being Portal \u2014 Admin"),
+        actionLink("admin_logout_btn", "\u2190 Log out",
+                   style = "color:rgba(255,255,255,0.85);font-size:13px;font-weight:600;")
+      ),
+      fluidPage(
+        fluidRow(
+          column(1),
+          column(10,
+            tags$h3("Submitted Data", style = "font-weight:700;margin-bottom:4px;"),
+            tags$p("Data entered by countries via the portal.",
+                   style = "font-size:12px;color:#888;margin-bottom:16px;"),
+            fluidRow(
+              column(4,
+                selectInput("admin_country_filter", "Country",
+                            choices = c("All countries" = "ALL"),
+                            width = "100%")
+              ),
+              column(4,
+                selectInput("admin_table_select", "Table",
+                            choices = c("Data entries" = "entries",
+                                        "Data flags" = "flags",
+                                        "Notes" = "notes",
+                                        "No updates declared" = "no_updates",
+                                        "Responses" = "responses",
+                                        "Time-use table 1" = "tu1",
+                                        "Time-use table 2" = "tu2",
+                                        "Feedback" = "feedback"),
+                            width = "100%")
+              ),
+              column(4, style = "padding-top:25px;",
+                downloadButton("admin_download_csv", "Download CSV",
+                               style = "width:100%;")
+              )
+            ),
+            DT::dataTableOutput("admin_data_table"),
+            tags$hr(style = "margin:30px 0 20px;border-color:#eee;"),
+            tags$div(
+              style = "display:flex;align-items:center;gap:16px;",
+              actionButton("admin_reset_btn", "Reset All Submissions",
+                           icon = icon("trash"),
+                           style = "background:#E63312;color:white;border:none;font-weight:600;"),
+              tags$span(
+                style = "font-size:12px;color:#888;",
+                "Permanently deletes all saved session files for every country."
+              )
+            ),
+            uiOutput("admin_reset_feedback", style = "margin-top:10px;")
+          ),
+          column(1)
+        )
+      )
+    )
+  )
 )       # end tagList
 
 # ── Server ────────────────────────────────────────────────────────────────────
@@ -548,14 +811,37 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$login_btn, {
-    req(input$login_country, input$login_password)
+    req(input$login_password)
+
+    # ── Admin login mode ─────────────────────────────────────────────────────
+    if (identical(input$login_mode, "admin")) {
+      if (input$login_password != "admin2026") {
+        output$login_error <- renderUI(
+          tags$p(style = "color:#E63312;font-size:12px;margin:0;", "Incorrect admin password.")
+        )
+        return()
+      }
+      admin_auth(TRUE)
+      # Populate country filter
+      rds_files <- list.files("sessions", pattern = "^[A-Z]{3}\\.rds$", full.names = FALSE)
+      isos      <- sub("\\.rds$", "", rds_files)
+      names(isos) <- countrycode::countrycode(isos, "iso3c", "country.name", warn = FALSE)
+      choices <- c("All countries" = "ALL", isos[order(names(isos))])
+      updateSelectInput(session, "admin_country_filter", choices = choices)
+
+      shinyjs::hide("login_screen")
+      shinyjs::show("admin_app")
+      return()
+    }
+
+    # ── Country login mode ───────────────────────────────────────────────────
+    req(input$login_country)
     if (!nzchar(input$login_country)) {
       output$login_error <- renderUI(
         tags$p(style = "color:#E63312;font-size:12px;margin:0;", "Please select a country.")
       )
       return()
     }
-    # Check per-country password first, then fall back to default
     pw_file   <- file.path("sessions", "passwords.rds")
     pw_store  <- if (file.exists(pw_file)) tryCatch(readRDS(pw_file), error = function(e) list()) else list()
     valid_pw  <- pw_store[[input$login_country]] %||% "oecd2026"
@@ -583,18 +869,32 @@ server <- function(input, output, session) {
         session_data$entries    <- loaded$entries    %||% list()
         session_data$notes      <- loaded$notes      %||% list()
         session_data$responses  <- loaded$responses  %||% list()
-        session_data$no_updates <- loaded$no_updates  %||% list()
-        session_data$time_use_1 <- loaded$time_use_1
-        session_data$time_use_2 <- loaded$time_use_2
+        session_data$no_updates <- loaded$no_updates %||% list()
+        session_data$flags      <- loaded$flags      %||% list()
+        session_data$time_use_1   <- loaded$time_use_1
+        session_data$time_use_2   <- loaded$time_use_2
+        session_data$tu_no_update <- loaded$tu_no_update %||% FALSE
         if (!is.null(loaded$tu_survey_name))
           updateTextInput(session,   "tu_survey_name", value = loaded$tu_survey_name)
         if (!is.null(loaded$tu_survey_year))
           updateNumericInput(session, "tu_survey_year", value = loaded$tu_survey_year)
+        if (!is.null(loaded$tu1_explanation) && nzchar(loaded$tu1_explanation))
+          updateTextAreaInput(session, "tu1_explanation", value = loaded$tu1_explanation)
       }
     }
 
     shinyjs::hide("login_screen")
     shinyjs::show("main_app")
+
+    # Restore time-use no-update button state
+    if (isTRUE(session_data$tu_no_update)) {
+      runjs("setTimeout(function() {
+        var btn = document.getElementById('tu_no_update_btn');
+        if(btn) btn.classList.add('active');
+        var el = document.getElementById('tu_no_update_status');
+        if(el) { el.style.color = '#1F7A4D'; el.innerText = '\\u2713 Marked as no update'; }
+      }, 300);")
+    }
   })
 
   # ── Logout ────────────────────────────────────────────────────────────────────
@@ -605,11 +905,13 @@ server <- function(input, output, session) {
     dat_rv(NULL)
 
     # Reset session data
-    session_data$entries    <- list()
-    session_data$notes      <- list()
-    session_data$responses  <- list()
-    session_data$time_use_1 <- NULL
-    session_data$time_use_2 <- NULL
+    session_data$entries      <- list()
+    session_data$notes        <- list()
+    session_data$responses    <- list()
+    session_data$flags        <- list()
+    session_data$time_use_1   <- NULL
+    session_data$time_use_2   <- NULL
+    session_data$tu_no_update <- FALSE
 
     # Reset login form
     updateSelectInput(session, "login_country", selected = "")
@@ -689,12 +991,14 @@ server <- function(input, output, session) {
 
   # ── Session data ─────────────────────────────────────────────────────────────
   session_data <- reactiveValues(
-    entries    = list(),
-    notes      = list(),
-    responses  = list(),
-    no_updates = list(),
-    time_use_1 = NULL,
-    time_use_2 = NULL
+    entries      = list(),
+    notes        = list(),
+    responses    = list(),
+    no_updates   = list(),
+    flags        = list(),
+    time_use_1   = NULL,
+    time_use_2   = NULL,
+    tu_no_update = FALSE
   )
 
   # Auto-save to sessions/{iso}.rds whenever any data changes
@@ -702,12 +1006,14 @@ server <- function(input, output, session) {
     req(credentials$authenticated, credentials$country)
     # Touch all fields to create reactive dependencies
     list(session_data$entries, session_data$notes, session_data$responses,
-         session_data$no_updates, session_data$time_use_1, session_data$time_use_2)
+         session_data$no_updates, session_data$flags, session_data$time_use_1, session_data$time_use_2,
+         session_data$tu_no_update)
     dir.create("sessions", showWarnings = FALSE)
     saveRDS(
       c(reactiveValuesToList(session_data),
-        list(tu_survey_name = isolate(input$tu_survey_name),
-             tu_survey_year = isolate(input$tu_survey_year))),
+        list(tu_survey_name  = isolate(input$tu_survey_name),
+             tu_survey_year  = isolate(input$tu_survey_year),
+             tu1_explanation = isolate(input$tu1_explanation))),
       file.path("sessions", paste0(credentials$country, ".rds"))
     )
   })
@@ -717,7 +1023,8 @@ server <- function(input, output, session) {
 
   # ── Time Use table builder ───────────────────────────────────────────────────
   make_time_use_table <- function(n_rows, col_names, n_text_cols, table_id,
-                                   row_text = NULL, saved = NULL) {
+                                   row_text = NULL, saved = NULL,
+                                   show_sums = FALSE, computed_codes = character(0)) {
     n_cols <- length(col_names)
     th <- paste(sapply(col_names, function(cn) {
       paste0("<th style='font-size:11px;padding:4px 8px;border:1px solid #ddd;background:#f5f5f5;white-space:pre-wrap;'>", cn, "</th>")
@@ -727,30 +1034,57 @@ server <- function(input, output, session) {
     body <- paste(sapply(seq_len(n_rows), function(r) {
       code_val   <- if (!is.null(row_text) && r <= nrow(row_text)) trimws(row_text[r, 1]) else ""
       is_divider <- grepl("\\.0$", code_val)
+      is_computed <- show_sums && (code_val %in% computed_codes)
 
       if (is_divider) {
         txt2          <- if (!is.null(row_text) && r <= nrow(row_text) && n_text_cols >= 2) row_text[r, 2] else ""
-        divider_label <- if (nchar(txt2) > 0) paste0(code_val, " \u2014 ", txt2) else code_val
-        td_style      <- "font-size:11px;font-weight:600;color:white;padding:6px 10px;border:1px solid #0f2843;background:#003189;"
-        paste0("<tr data-row='", r, "' style='background:#003189;'>",
-               "<td colspan='", n_cols, "' style='", td_style, "'>", divider_label, "</td></tr>")
+        divider_label <- if (nchar(txt2) > 0) paste0(code_val, " - ", txt2) else code_val
+        if (show_sums) {
+          td_label_style <- "font-size:11px;font-weight:600;color:white;padding:6px 10px;border:1px solid #0f2843;background:#003189;"
+          label_td <- paste0("<td colspan='", n_text_cols, "' style='", td_label_style, "'>", divider_label, "</td>")
+          sum_tds <- paste(sapply((n_text_cols + 1):n_cols, function(c) {
+            paste0("<td class='group-sum-cell' data-group-row='", r, "' data-col='", c, "' ",
+                   "style='font-size:11px;font-weight:700;color:rgba(255,255,255,0.85);padding:6px 4px;",
+                   "border:1px solid #0f2843;background:#003189;text-align:center;min-width:60px;'>\u2014</td>")
+          }), collapse = "")
+          paste0("<tr data-row='", r, "'>", label_td, sum_tds, "</tr>")
+        } else {
+          td_style <- "font-size:11px;font-weight:600;color:white;padding:6px 10px;border:1px solid #0f2843;background:#003189;"
+          paste0("<tr data-row='", r, "' style='background:#003189;'>",
+                 "<td colspan='", n_cols, "' style='", td_style, "'>", divider_label, "</td></tr>")
+        }
       } else {
         cells <- paste(sapply(seq_len(n_cols), function(c) {
           if (c <= n_text_cols) {
             txt <- if (!is.null(row_text) && r <= nrow(row_text)) row_text[r, c] else ""
-            paste0("<td style='font-size:11px;padding:4px 6px;border:1px solid #eee;color:#333;'>", txt, "</td>")
+            td_style <- if (is_computed) {
+              "font-size:11px;padding:4px 6px;border:1px solid #d0d8e2;color:#1F2B3A;font-weight:600;background:#e8eef5;"
+            } else {
+              "font-size:11px;padding:4px 6px;border:1px solid #eee;color:#333;"
+            }
+            paste0("<td style='", td_style, "'>", txt, "</td>")
           } else {
             saved_val <- if (!is.null(saved) && !is.null(saved[[as.character(r)]])) {
               val <- saved[[as.character(r)]][[paste0("c", c)]]
               if (!is.null(val)) val else ""
             } else ""
-            paste0("<td style='padding:2px;'>",
-                   "<input type='text' inputmode='decimal' class='tu-num year-input' ",
-                   "data-row='", r, "' data-col='", c, "' value='", saved_val, "' ",
-                   "oninput=\"this.value=this.value.replace(/[^0-9.\\-]/g,'')\" ",
-                   "style='width:100%;min-width:60px;font-size:11px;border:1px solid #ccc;",
-                   "border-radius:3px;padding:2px 4px;text-align:center;'/>",
-                   "</td>")
+            if (is_computed) {
+              paste0("<td style='padding:2px;background:#e8eef5;'>",
+                     "<input type='text' class='tu-num year-input tu-computed' ",
+                     "data-row='", r, "' data-col='", c, "' value='", saved_val, "' ",
+                     "readonly tabindex='-1' ",
+                     "style='width:100%;min-width:60px;font-size:11px;font-weight:600;border:1px solid #b8c4d0;",
+                     "border-radius:3px;padding:2px 4px;text-align:center;background:#dce4ef;color:#1F2B3A;cursor:default;'/>",
+                     "</td>")
+            } else {
+              paste0("<td style='padding:2px;'>",
+                     "<input type='text' inputmode='decimal' class='tu-num year-input' ",
+                     "data-row='", r, "' data-col='", c, "' value='", saved_val, "' ",
+                     "oninput=\"this.value=this.value.replace(/[^0-9.\\-]/g,'')\" ",
+                     "style='width:100%;min-width:60px;font-size:11px;border:1px solid #ccc;",
+                     "border-radius:3px;padding:2px 4px;text-align:center;'/>",
+                     "</td>")
+            }
           }
         }), collapse = "")
         paste0("<tr data-row='", r, "'>", cells, "</tr>")
@@ -776,7 +1110,9 @@ server <- function(input, output, session) {
   output$time_use_table1_ui <- renderUI({
     HTML(make_time_use_table(31, time_use_col_names_1, 2, "tu_table1",
                               row_text = time_use_row_text_1,
-                              saved    = session_data$time_use_1))
+                              saved    = session_data$time_use_1,
+                              show_sums = TRUE,
+                              computed_codes = c("T")))
   })
   output$time_use_table2_ui <- renderUI({
     HTML(make_time_use_table(30, time_use_col_names_2, 2, "tu_table2",
@@ -992,18 +1328,32 @@ server <- function(input, output, session) {
     )
 
     # Row breakdown definitions
+    # Age labels depend on which age-group classification the measure uses
+    age_labels <- function(m) {
+      if (m %in% young_15_24) {
+        list(young = "Young (15-24 years)", middle_aged = "Middle-aged (25-64 years)", old = "Old (65+ years)")
+      } else if (m %in% young_16_24) {
+        list(young = "Young (16-24 years)", middle_aged = "Middle-aged (25-54 years)", old = "Old (55+ years)")
+      } else {
+        # Default: young_16_29 grouping
+        list(young = "Young (16-29 years)", middle_aged = "Middle-aged (30-49 years)", old = "Old (50+ years)")
+      }
+    }
+
     row_defs <- function(m) {
+      al <- age_labels(m)
       if (m %in% all_rows) {
         list(
           list(key="country_avg", label="Country average",       bold=TRUE),
           list(key="male",        label="Male",                  bold=FALSE),
           list(key="female",      label="Female",                bold=FALSE),
-          list(key="young",       label="Young",                 bold=FALSE),
-          list(key="middle_aged", label="Middle-aged",           bold=FALSE),
-          list(key="old",         label="Old",                   bold=FALSE),
-          list(key="primary",     label="Primary (ISCED 0-2)",   bold=FALSE),
-          list(key="secondary",   label="Secondary (ISCED 3-4)", bold=FALSE),
-          list(key="tertiary",    label="Tertiary (ISCED 5-8)",  bold=FALSE)
+          list(key="young",       label=al$young,                bold=FALSE),
+          list(key="middle_aged", label=al$middle_aged,          bold=FALSE),
+          list(key="old",         label=al$old,                  bold=FALSE),
+          list(key="age_flag",    label="",                      bold=FALSE, is_age_flag=TRUE),
+          list(key="primary",     label="Primary (ISCED levels 0-2)",   bold=FALSE),
+          list(key="secondary",   label="Secondary (ISCED levels 3-4)", bold=FALSE),
+          list(key="tertiary",    label="Tertiary (ISCED levels 5-8)",  bold=FALSE)
         )
       } else if (exists("all_rows_dep_vert") && m %in% all_rows_dep_vert) {
         list(
@@ -1012,12 +1362,13 @@ server <- function(input, output, session) {
           list(key="dep",         label="Deprivation",           bold=FALSE),
           list(key="male",        label="Male",                  bold=FALSE),
           list(key="female",      label="Female",                bold=FALSE),
-          list(key="young",       label="Young",                 bold=FALSE),
-          list(key="middle_aged", label="Middle-aged",           bold=FALSE),
-          list(key="old",         label="Old",                   bold=FALSE),
-          list(key="primary",     label="Primary (ISCED 0-2)",   bold=FALSE),
-          list(key="secondary",   label="Secondary (ISCED 3-4)", bold=FALSE),
-          list(key="tertiary",    label="Tertiary (ISCED 5-8)",  bold=FALSE)
+          list(key="young",       label=al$young,                bold=FALSE),
+          list(key="middle_aged", label=al$middle_aged,          bold=FALSE),
+          list(key="old",         label=al$old,                  bold=FALSE),
+          list(key="age_flag",    label="",                      bold=FALSE, is_age_flag=TRUE),
+          list(key="primary",     label="Primary (ISCED levels 0-2)",   bold=FALSE),
+          list(key="secondary",   label="Secondary (ISCED levels 3-4)", bold=FALSE),
+          list(key="tertiary",    label="Tertiary (ISCED levels 5-8)",  bold=FALSE)
         )
       } else if (m %in% gender_only) {
         list(
@@ -1033,6 +1384,7 @@ server <- function(input, output, session) {
     make_year_inputs <- function(m) {
       vals  <- val_lookup %>% filter(measure == m)
       saved <- session_data$entries[[m]]
+      saved_flags <- session_data$flags[[m]]
       rows  <- row_defs(m)
       yr_header <- paste(sapply(years, function(yr) {
         paste0("<div style='flex:1;text-align:center;font-size:8px;color:#888;min-width:32px;'>", yr, "</div>")
@@ -1042,8 +1394,32 @@ server <- function(input, output, session) {
         "<div style='flex:0 0 150px;'></div>",
         "<div style='flex:1;display:flex;'>", yr_header, "</div></div>"
       )
+      # Retrieve saved age-flag note for this measure
+      saved_age_flag <- if (!is.null(saved) && !is.null(saved[["age_flag"]])) saved[["age_flag"]] else ""
+
+      # Flag options
+      flag_codes <- c("", "B", "E", "P", "D", "U")
+      flag_labels <- c("\u2014", "B", "E", "P", "D", "U")
+
       row_htmls <- sapply(rows, function(r) {
-        inputs <- sapply(years, function(yr) {
+        # Special row: age group difference flag (text input spanning full width)
+        if (!is.null(r$is_age_flag) && isTRUE(r$is_age_flag)) {
+          flag_val <- if (is.list(saved_age_flag)) "" else as.character(saved_age_flag)
+          return(paste0(
+            "<div style='display:flex;align-items:center;margin-bottom:4px;margin-top:2px;'>",
+            "<div style='flex:0 0 150px;font-size:10px;color:#888;padding-right:6px;text-align:right;font-style:italic;'>",
+            "Age groups differ?</div>",
+            "<div style='flex:1;'>",
+            "<input type='text' class='year-input' data-row='age_flag' data-year='note' ",
+            "value='", htmltools::htmlEscape(flag_val, attribute = TRUE), "' ",
+            "placeholder='If your age groups differ from the above, describe here' ",
+            "style='width:100%;padding:3px 6px;border:1px solid #dde1e6;border-radius:4px;",
+            "font-size:10px;color:#555;'/>",
+            "</div></div>"
+          ))
+        }
+        # Combined value + flag cells (stacked within each year column)
+        cells <- sapply(years, function(yr) {
           v <- if (!is.null(saved) && !is.null(saved[[r$key]]) &&
                    !is.null(saved[[r$key]][[as.character(yr)]])) {
             saved[[r$key]][[as.character(yr)]]
@@ -1053,27 +1429,54 @@ server <- function(input, output, session) {
           } else NA
           has_val          <- !is.na(v)
           value_attr       <- if (has_val) paste0("value='", v, "'") else ""
-          placeholder_attr <- if (!has_val) "placeholder='-'" else ""
+          placeholder_attr <- if (!has_val) "placeholder='\u00b7'" else ""
+
+          saved_f <- if (!is.null(saved_flags) && !is.null(saved_flags[[r$key]]) &&
+                         !is.null(saved_flags[[r$key]][[as.character(yr)]])) {
+            saved_flags[[r$key]][[as.character(yr)]]
+          } else ""
+          opts_html <- paste(mapply(function(code, lbl) {
+            sel <- if (identical(code, saved_f)) " selected" else ""
+            paste0("<option value='", code, "'", sel, ">", lbl, "</option>")
+          }, flag_codes, flag_labels, SIMPLIFY = TRUE), collapse = "")
+
           paste0(
-            "<div style='flex:1;min-width:32px;padding:1px;'>",
+            "<div style='flex:1;min-width:32px;padding:0 1px;'>",
             "<input type='text' inputmode='decimal' class='year-input' ",
             "data-row='", r$key, "' data-year='", yr, "' ",
             value_attr, " ", placeholder_attr,
             " oninput=\"this.value=this.value.replace(/[^0-9.\\-]/g,'')\"",
-            " style='width:100%;padding:1px;border:1px solid #ccc;border-radius:3px;",
-            "font-size:10px;text-align:center;'/>",
+            " style='width:100%;padding:2px 1px;border:1px solid #dde1e6;border-radius:4px 4px 0 0;",
+            "font-size:10px;text-align:center;border-bottom:none;'/>",
+            "<select class='flag-select' data-row='", r$key, "' data-year='", yr, "' ",
+            "style='width:100%;padding:0;border:1px solid #dde1e6;border-radius:0 0 4px 4px;",
+            "font-size:7px;text-align:center;color:#999;background:#fafbfc;cursor:pointer;",
+            "line-height:1;height:14px;-webkit-appearance:none;appearance:none;'>",
+            opts_html, "</select>",
             "</div>"
           )
         })
         paste0(
-          "<div style='display:flex;align-items:center;margin-bottom:2px;'>",
+          "<div style='display:flex;align-items:center;margin-bottom:3px;'>",
           "<div style='flex:0 0 150px;font-size:11px;color:#444;padding-right:6px;text-align:right;",
           if (r$bold) "font-weight:600;" else "", "'>", r$label, "</div>",
-          "<div style='flex:1;display:flex;'>", paste(inputs, collapse=""), "</div></div>"
+          "<div style='flex:1;display:flex;'>", paste(cells, collapse=""), "</div></div>"
         )
       })
+      # Flag legend
+      flag_legend <- paste0(
+        "<div style='font-size:9px;color:#999;margin-top:6px;padding:4px 8px;",
+        "background:#f8f9fa;border-radius:4px;display:inline-block;'>",
+        "<strong style='color:#666;'>Flags:</strong> ",
+        "B = Break in series &nbsp;&middot;&nbsp; ",
+        "E = Estimate &nbsp;&middot;&nbsp; ",
+        "P = Provisional &nbsp;&middot;&nbsp; ",
+        "D = Definition differs &nbsp;&middot;&nbsp; ",
+        "U = Low reliability",
+        "</div>"
+      )
       paste0("<div style='overflow-x:auto;margin-top:6px;'>", header_html,
-             paste(row_htmls, collapse=""), "</div>")
+             paste(row_htmls, collapse=""), flag_legend, "</div>")
     }
 
     year_inputs_lookup <- setNames(
@@ -1149,20 +1552,45 @@ server <- function(input, output, session) {
         { if (!coverage_mode) filter(., measure %in% submission_measures) else . } %>%
         mutate(time_period = as.numeric(time_period)) %>%
         left_join(submitted_df, by = c("measure", "time_period")) %>%
+        { if (coverage_mode)
+            left_join(., coverage_counts, by = c("measure", "time_period"))
+          else
+            mutate(., n_countries = NA_integer_)
+        } %>%
         mutate(
           submitted = replace_na(submitted, FALSE),
+          n_countries = replace_na(n_countries, 0L),
+          # Fraction of countries with data (0-1), used for gap gradient
+          n_frac = pmin(n_countries / max(n_total_countries, 1), 1),
+          is_no_concern = measure %in% time_use_no_concern,
+          # Pre-compute gradient color (amber #FDE8C8 → red #C0392B)
+          gap_color = rgb(
+            253 + (192 - 253) * n_frac,
+            232 + ( 57 - 232) * n_frac,
+            200 + ( 43 - 200) * n_frac,
+            maxColorValue = 255
+          ),
           color = case_when(
-            !is.na(obs_value) ~ "#1F7A4D",
-            submitted          ~ "#F89C1C",
-            TRUE               ~ "#D9DDE3"
+            !is.na(obs_value)                               ~ "#1F7A4D",
+            submitted                                       ~ "#F89C1C",
+            coverage_mode & is_no_concern & n_countries > 0 ~ "#FCE4B8",
+            coverage_mode & n_countries > 0                 ~ gap_color,
+            TRUE                                            ~ "#D9DDE3"
+          ),
+          tooltip = case_when(
+            !is.na(obs_value)               ~ "",
+            coverage_mode & n_countries > 0 ~ paste0(n_countries, " of ", n_total_countries, " countries have data"),
+            TRUE                            ~ ""
           )
         ) %>%
-        select(measure, time_period, color, cat, group) %>%
+        select(measure, time_period, color, tooltip, cat, group) %>%
         group_by(measure) %>%
         mutate(
           boxes = paste0(
             "<div style='flex:1;height:15px;background:", color,
-            ";margin:1px;border-radius:2.5px;'></div>",
+            ";margin:1px;border-radius:2.5px;'",
+            if_else(nchar(tooltip) > 0, paste0(" title='", tooltip, "'"), ""),
+            "></div>",
             collapse = ""
           )
         ) %>%
@@ -1181,8 +1609,8 @@ server <- function(input, output, session) {
           oecd_q_html    = sapply(measure, function(m) response_html_lookup[[m]]$oecd),
           country_q_html = sapply(measure, function(m) response_html_lookup[[m]]$country),
           def_text       = linkify(replace_na(definition, "Definition to be added.")),
-          tech_name      = replace_na(indicator,  "\u2014"),
-          unit_text      = replace_na(unit,       "\u2014"),
+          tech_name      = replace_na(indicator,  "-"),
+          unit_text      = replace_na(unit,       "-"),
 
           row_border = case_when(
             needs_input ~ "border-left:3px solid #F89C1C;background:#fffbf4;",
@@ -1334,6 +1762,8 @@ server <- function(input, output, session) {
   observeEvent(input$submitted_data, {
     d <- input$submitted_data
     session_data$entries[[d$measure]] <- d$values
+    # Data flags (B, E, P, etc.)
+    if (!is.null(d$flags)) session_data$flags[[d$measure]] <- d$flags
     # Country Question Format responses are submitted alongside the data
     if (!is.null(d$responses)) session_data$responses[[d$measure]] <- d$responses
     runjs(paste0("
@@ -1377,26 +1807,92 @@ server <- function(input, output, session) {
     "))
   })
 
-  # ── Admin tab ───────────────────────────────────────────────────────────────
+  # ── Time-use no-update observer ────────────────────────────────────────────
+  observeEvent(input$tu_no_update_declared, {
+    d <- input$tu_no_update_declared
+    session_data$tu_no_update <- d$active
+    runjs(paste0("
+      var el = document.getElementById('tu_no_update_status');
+      if(el) {
+        if(", tolower(d$active), ") {
+          el.style.color = '#1F7A4D';
+          el.innerText = '\\u2713 Marked as no update at ", format(Sys.time(), "%H:%M:%S"), "';
+        } else {
+          el.innerText = '';
+        }
+      }
+    "))
+  })
+
+  # ── Tab completion badges ──────────────────────────────────────────────────
+  observe({
+    req(credentials$authenticated)
+
+    entries    <- session_data$entries
+    no_updates <- session_data$no_updates
+
+    # Well-being: count remaining indicators
+    submitted_measures <- names(entries)[vapply(names(entries), function(m) {
+      ca <- entries[[m]][["country_avg"]]
+      !is.null(ca) && any(vapply(ca, function(v) !is.null(v) && !is.na(v) && v != "", logical(1)))
+    }, logical(1))]
+    no_update_measures <- names(no_updates)[vapply(no_updates, isTRUE, logical(1))]
+
+    is_eu_silc <- credentials$country %in% eu_silc_countries
+    sub_measures <- if (is_eu_silc) setdiff(xlsx_measures, eu_silc_measures) else xlsx_measures
+    done_wb <- union(submitted_measures, no_update_measures)
+    remaining_wb <- length(setdiff(sub_measures, done_wb))
+
+    # Time use: done if table 1 submitted OR no-update declared
+    tu_done <- !is.null(session_data$time_use_1) || isTRUE(session_data$tu_no_update)
+
+    wb_badge_js <- if (remaining_wb > 0) paste0("'", remaining_wb, "'") else "null"
+    tu_badge_js <- if (!tu_done) "'!'" else "null"
+
+    runjs(sprintf("
+      setTimeout(function() {
+        function setBadge(sel, text) {
+          var tab = document.querySelector(sel);
+          if (!tab) return;
+          var b = tab.querySelector('.tab-badge');
+          if (!b) { b = document.createElement('span'); b.className = 'tab-badge'; tab.appendChild(b); }
+          if (text) {
+            b.textContent = text;
+            b.style.cssText = 'font-size:9px;background:#F89C1C;color:white;border-radius:8px;padding:1px 6px;margin-left:6px;font-weight:600;display:inline;';
+          } else {
+            b.style.display = 'none';
+          }
+        }
+        setBadge('a[data-value=\"Well-being Data Submissions\"]', %s);
+        setBadge('a[data-value=\"Time Use Data Submissions\"]', %s);
+      }, 100);
+    ", wb_badge_js, tu_badge_js))
+  })
+
+  # ── Admin ───────────────────────────────────────────────────────────────────
   admin_auth <- reactiveVal(FALSE)
 
-  observeEvent(input$admin_login_btn, {
-    if (identical(input$admin_password, "admin2026")) {
-      admin_auth(TRUE)
-      shinyjs::hide("admin_login_gate")
-      shinyjs::show("admin_panel")
-
-      # Populate country filter from available session files
-      rds_files <- list.files("sessions", pattern = "^[A-Z]{3}\\.rds$", full.names = FALSE)
-      isos      <- sub("\\.rds$", "", rds_files)
-      names(isos) <- countrycode::countrycode(isos, "iso3c", "country.name", warn = FALSE)
-      choices <- c("All countries" = "ALL", sort(setNames(isos, names(isos))))
-      updateSelectInput(session, "admin_country_filter", choices = choices)
-    } else {
-      output$admin_login_error <- renderUI(
-        tags$p(style = "color:#E63312;font-size:12px;", "Incorrect admin password.")
-      )
-    }
+  observeEvent(input$admin_logout_btn, {
+    admin_auth(FALSE)
+    updateTextInput(session, "login_password", value = "")
+    output$login_error <- renderUI(NULL)
+    # Reset login page to country mode
+    runjs("
+      var cr = document.getElementById('login_country_row');
+      var al = document.getElementById('admin_link');
+      var ab = document.getElementById('admin_back_link');
+      var lt = document.getElementById('login_title');
+      var ld = document.getElementById('login_desc');
+      if(cr) cr.style.display = 'block';
+      if(al) al.style.display = 'block';
+      if(ab) ab.style.display = 'none';
+      if(lt) lt.textContent = 'OECD Well-being and Time Use Questionnaire Portal';
+      if(ld) ld.textContent = 'Select your country and enter the access password.';
+      Shiny.setInputValue('login_mode', 'country');
+    ")
+    Sys.sleep(0.1)
+    shinyjs::hide("admin_app")
+    shinyjs::show("login_screen")
   })
 
   # Read all session files and assemble into tidy tables
@@ -1407,16 +1903,19 @@ server <- function(input, output, session) {
     input$admin_table_select
 
     rds_files <- list.files("sessions", pattern = "^[A-Z]{3}\\.rds$", full.names = TRUE)
-    empty <- list(entries = data.frame(), notes = data.frame(),
+    empty <- list(entries = data.frame(), flags = data.frame(),
+                  notes = data.frame(), no_updates = data.frame(),
                   responses = data.frame(), tu1 = data.frame(),
                   tu2 = data.frame(), feedback = data.frame())
     if (length(rds_files) == 0) return(empty)
 
-    all_entries   <- list()
-    all_notes     <- list()
-    all_responses <- list()
-    all_tu1       <- list()
-    all_tu2       <- list()
+    all_entries    <- list()
+    all_flags      <- list()
+    all_notes      <- list()
+    all_no_updates <- list()
+    all_responses  <- list()
+    all_tu1        <- list()
+    all_tu2        <- list()
 
     for (f in rds_files) {
       iso <- sub("\\.rds$", "", basename(f))
@@ -1445,6 +1944,27 @@ server <- function(input, output, session) {
         }
       }
 
+      # Flags (B, E, P, etc.)
+      if (!is.null(s$flags) && length(s$flags) > 0) {
+        for (m in names(s$flags)) {
+          flag_data <- s$flags[[m]]
+          if (!is.list(flag_data)) next
+          for (rk in names(flag_data)) {
+            yr_data <- flag_data[[rk]]
+            if (!is.list(yr_data)) next
+            for (yr in names(yr_data)) {
+              v <- yr_data[[yr]]
+              if (!is.null(v) && nzchar(v)) {
+                all_flags[[length(all_flags) + 1]] <-
+                  data.frame(country = cname, iso = iso, measure = m,
+                             row_type = rk, year = as.integer(yr),
+                             flag = v, stringsAsFactors = FALSE)
+              }
+            }
+          }
+        }
+      }
+
       # Notes
       if (!is.null(s$notes) && length(s$notes) > 0) {
         for (m in names(s$notes)) {
@@ -1453,6 +1973,17 @@ server <- function(input, output, session) {
             all_notes[[length(all_notes) + 1]] <-
               data.frame(country = cname, iso = iso, measure = m,
                          note = n, stringsAsFactors = FALSE)
+          }
+        }
+      }
+
+      # No updates
+      if (!is.null(s$no_updates) && length(s$no_updates) > 0) {
+        for (m in names(s$no_updates)) {
+          if (isTRUE(s$no_updates[[m]])) {
+            all_no_updates[[length(all_no_updates) + 1]] <-
+              data.frame(country = cname, iso = iso, measure = m,
+                         no_update = TRUE, stringsAsFactors = FALSE)
           }
         }
       }
@@ -1519,9 +2050,11 @@ server <- function(input, output, session) {
     } else data.frame()
 
     list(
-      entries   = if (length(all_entries)   > 0) bind_rows(all_entries)   else data.frame(country = character(), iso = character(), measure = character(), row_type = character(), year = integer(), value = numeric()),
-      notes     = if (length(all_notes)     > 0) bind_rows(all_notes)     else data.frame(country = character(), iso = character(), measure = character(), note = character()),
-      responses = if (length(all_responses) > 0) bind_rows(all_responses) else data.frame(country = character(), iso = character(), measure = character(), question_index = integer(), response = character()),
+      entries    = if (length(all_entries)    > 0) bind_rows(all_entries)    else data.frame(country = character(), iso = character(), measure = character(), row_type = character(), year = integer(), value = numeric()),
+      flags      = if (length(all_flags)      > 0) bind_rows(all_flags)      else data.frame(country = character(), iso = character(), measure = character(), row_type = character(), year = integer(), flag = character()),
+      notes      = if (length(all_notes)      > 0) bind_rows(all_notes)      else data.frame(country = character(), iso = character(), measure = character(), note = character()),
+      no_updates = if (length(all_no_updates) > 0) bind_rows(all_no_updates) else data.frame(country = character(), iso = character(), measure = character(), no_update = logical()),
+      responses  = if (length(all_responses)  > 0) bind_rows(all_responses)  else data.frame(country = character(), iso = character(), measure = character(), question_index = integer(), response = character()),
       tu1       = if (length(all_tu1)       > 0) bind_rows(all_tu1)       else data.frame(country = character(), iso = character(), row = integer(), col = character(), value = character()),
       tu2       = if (length(all_tu2)       > 0) bind_rows(all_tu2)       else data.frame(country = character(), iso = character(), row = integer(), col = character(), value = character()),
       feedback  = if (nrow(fb_df) > 0) fb_df else data.frame(country = character(), iso = character(), timestamp = character(), message = character())

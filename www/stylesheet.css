@@ -52,14 +52,14 @@ body { background: #F7F9FC; }
 }
 /* Utility buttons (gear, logout) in navbar */
 .navbar-right-utils {
-  position: absolute;
+  position: fixed;
   right: 16px;
   top: 0;
   height: 50px;
   display: flex;
   align-items: center;
   gap: 4px;
-  z-index: 1000;
+  z-index: 1050;
 }
 .navbar-right-utils a {
   color: rgba(255,255,255,0.8) !important;

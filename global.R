@@ -15,6 +15,8 @@ eu_silc_countries <- c("AUT", "BEL", "BGR", "CYP", "CZE", "DNK", "EST", "FIN", "
                        "MLT", "NLD", "NOR", "POL", "PRT", "ROU", "SRB", "SVK", "SVN",
                        "ESP", "SWE", "CHE")
 
+partner_countries <- c("BRA", "ARG", "BGR", "HRV", "PER", "ROU", "IDN", "THA", "ZAF")
+
 oecd_names <- c("Australia", "Austria", "Belgium", "Canada", "Chile", "Colombia", "Czech Republic", "Denmark", "Estonia",
                 "Finland", "France", "Germany", "Greece", "Hungary", "Iceland", "Ireland", "Israel", "Italy", "Japan",
                 "Korea", "Latvia", "Lithuania", "Luxembourg", "Mexico", "Netherlands", "New Zealand", "Norway", "Poland",
@@ -23,7 +25,12 @@ oecd_names <- c("Australia", "Austria", "Belgium", "Canada", "Chile", "Colombia"
 
 partner_countries <- c("BRA", "ARG", "BGR", "HRV", "PER", "ROU", "IDN", "THA", "ZAF")
 
-country_name_vector <- setNames(oecd_countries, oecd_names)
+partner_names <- c("Brazil", "Argentina", "Bulgaria", "Croatia", "Peru", "Romania", "Indonesia", "Thailand", "South Africa")
+
+country_name_vector <- c(
+  setNames(oecd_countries, oecd_names),
+  setNames(partner_countries, partner_names)
+)
 
 dict <- readxl::read_excel("data/dictionary.xlsx") %>%
   mutate(question = NA)
@@ -39,7 +46,10 @@ measure_list <- dict %>%
   filter(!grepl("_DEP", measure), !grepl("_VER", measure),
           !grepl("11_3_", measure)) 
 
+
 dat <- readRDS("./data/final dataset.RDS") %>%
+  select(-base_per) %>%
+  rbind(readRDS("./data/5_5 Request data.RDS")) %>%
   filter(sex == "_T", age == "_T", education_lev == "_T",
          measure %in% unique(measure_list$measure)) %>%
   mutate(time_period = as.numeric(time_period))
@@ -112,6 +122,15 @@ table_1_col_2 <- c(
   "Total"
 )
 
+young_16_29 <- c("2_9", "4_4", "7_3", "11_1",
+                "4_1", "7_2", "7_4", "14_1", "14_2")
+
+young_15_24 <- c("5_4", "5_5")
+
+young_16_24 <- c("8_2")
+
+
+
 # Fixed text for the first two (static) columns of each Time Use table.
 # Edit values directly here — these display as read-only text in the app.
 time_use_row_text_1 <- data.frame(
@@ -125,6 +144,26 @@ time_use_row_text_2 <- data.frame(
   Col_2 = table_1_col_2[-31],
   stringsAsFactors = FALSE
 )
+
+# ── Cross-country coverage counts ────────────────────────────────────────────
+# For each measure × year, how many countries have data?  Used in the
+# Well-being Data Coverage heatmap to highlight important gaps.
+dat_all_country_avgs <- readRDS("./data/final dataset.RDS") %>%
+  filter(sex == "_T", age == "_T", education_lev == "_T",
+         !is.na(obs_value)) %>%
+  filter(!grepl("_DEP$|_VER$", measure), !grepl("11_3_", measure))
+
+n_total_countries <- n_distinct(dat_all_country_avgs$ref_area)
+
+coverage_counts <- dat_all_country_avgs %>%
+  group_by(measure, time_period) %>%
+  summarise(n_countries = n_distinct(ref_area), .groups = "drop") %>%
+  mutate(time_period = as.numeric(time_period))
+
+rm(dat_all_country_avgs)
+
+# Measures from time-use surveys — gaps are less concerning for these
+time_use_no_concern <- c("4_1", "4_2", "4_3", "8_2")
 
 # OECD average series — loaded when available; NULL otherwise
 oecd_avg_file <- "data/oecd average.RDS"

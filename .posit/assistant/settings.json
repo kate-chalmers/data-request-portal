@@ -6,6 +6,9 @@
     "edit": {
       "*.R": "allow",
       "*.css": "allow"
+    },
+    "bash": {
+      "Rscript *": "allow"
     }
   }
 }

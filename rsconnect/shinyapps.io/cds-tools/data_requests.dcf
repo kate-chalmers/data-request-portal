@@ -5,9 +5,9 @@ account: cds-tools
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 17188739
-bundleId: 12244174
+bundleId: 12270547
 url: https://cds-tools.shinyapps.io/data_requests/
 version: 1
 asMultiple: FALSE
 asStatic: FALSE
-ignoredFiles: .posit/assistant/settings.json|.posit/publish/data_requests-OI4F.toml|.posit/publish/deployments/deployment-F8NK.toml|NO DEPLOY/MEX well-being and time use questionnaire - February 2025.xlsx|NO DEPLOY/scrape questions.R|NO DEPLOY/time series average|NO DEPLOY/utils_processing.R
+ignoredFiles: .posit/assistant/plans/2026-07-02-1516-admin-tab-and-data-coverage-investigation.md|.posit/assistant/plans/2026-07-13-1107-shiny-app-enhancements-spinner-flags-age-labels-admin-backend-5-5-fix.md|.posit/assistant/settings.json|.posit/publish/data_requests-OI4F.toml|.posit/publish/deployments/deployment-F8NK.toml|NO DEPLOY/MEX well-being and time use questionnaire - February 2025.xlsx|NO DEPLOY/missing plots tidy.R|NO DEPLOY/scrape questions.R|NO DEPLOY/time series average.R|NO DEPLOY/utils_processing.R|sessions/AUS.rds|sessions/AUT.rds|sessions/BEL.rds
