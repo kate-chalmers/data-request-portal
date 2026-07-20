@@ -8,7 +8,10 @@
       "*.css": "allow"
     },
     "bash": {
-      "Rscript *": "allow"
+      "Rscript *": "allow",
+      "tail *": "allow",
+      "*": "allow",
+      "grep *": "allow"
     }
   }
 }

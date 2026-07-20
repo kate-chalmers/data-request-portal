@@ -126,6 +126,78 @@ shared_head <- tagList(
         { active: isActive, timestamp: new Date().toISOString() },
         {priority: 'event'});
     }
+  ")),
+  tags$script(HTML("
+    // ── Paste-from-spreadsheet modal for time use tables ──────────
+    var __pasteTarget = null;
+    var __pasteTextCols = 0;
+    var __pasteTotalCols = 0;
+
+    function openPasteModal(tableId, nTextCols, nTotalCols) {
+      __pasteTarget = tableId;
+      __pasteTextCols = nTextCols;
+      __pasteTotalCols = nTotalCols;
+      var nNumCols = nTotalCols - nTextCols;
+      document.getElementById('paste_modal_textarea').value = '';
+      document.getElementById('paste_modal_status').innerText = '';
+      document.getElementById('paste_modal_hint').innerText =
+        'Paste ' + nNumCols + ' numeric column(s) of data, one row per line, values separated by tabs. ' +
+        'Rows should match the table order (skip header/divider rows).';
+      document.getElementById('paste_modal_overlay').style.display = 'flex';
+    }
+
+    function closePasteModal() {
+      document.getElementById('paste_modal_overlay').style.display = 'none';
+      __pasteTarget = null;
+    }
+
+    function applyPastedData() {
+      var text = document.getElementById('paste_modal_textarea').value.trim();
+      if (!text || !__pasteTarget) return;
+
+      var table = document.getElementById(__pasteTarget);
+      if (!table) return;
+
+      var lines = text.split(/\\r?\\n/).filter(function(l) { return l.trim() !== ''; });
+      var dataRows = table.querySelectorAll('tr[data-row]');
+      // Filter to non-divider rows (those with input elements)
+      var editableRows = [];
+      dataRows.forEach(function(row) {
+        if (row.querySelector('input')) editableRows.push(row);
+      });
+
+      var nFilled = 0;
+      var nNumCols = __pasteTotalCols - __pasteTextCols;
+
+      for (var i = 0; i < lines.length && i < editableRows.length; i++) {
+        var cells = lines[i].split('\t');
+        // User might paste all columns (incl. text) or just numeric columns
+        var numValues;
+        if (cells.length >= __pasteTotalCols) {
+          // Pasted full row including text columns — take only numeric part
+          numValues = cells.slice(__pasteTextCols, __pasteTotalCols);
+        } else {
+          // Assume only numeric columns were pasted
+          numValues = cells.slice(0, nNumCols);
+        }
+
+        var inputs = editableRows[i].querySelectorAll('input:not([readonly])');
+        for (var j = 0; j < numValues.length && j < inputs.length; j++) {
+          var val = numValues[j].trim();
+          if (val !== '') {
+            inputs[j].value = val;
+            inputs[j].dispatchEvent(new Event('input', {bubbles: true}));
+            nFilled++;
+          }
+        }
+      }
+
+      var statusEl = document.getElementById('paste_modal_status');
+      statusEl.style.color = '#1F7A4D';
+      statusEl.innerText = '\u2713 Populated ' + nFilled + ' cells across ' +
+        Math.min(lines.length, editableRows.length) + ' rows.';
+      setTimeout(closePasteModal, 1200);
+    }
 
     function toggleAdminLogin() {
       var countryRow = document.getElementById('login_country_row');
@@ -375,6 +447,52 @@ login_country_choices <- list(
 ui <- tagList(
   shared_head,
 
+  # ── Paste-from-spreadsheet modal overlay ─────────────────────────────────
+  tags$div(
+    id = "paste_modal_overlay",
+    style = paste0(
+      "display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:10000;",
+      "background:rgba(0,0,0,0.45);align-items:center;justify-content:center;"
+    ),
+    tags$div(
+      style = paste0(
+        "background:#fff;border-radius:10px;padding:28px 32px;width:560px;max-width:92vw;",
+        "box-shadow:0 8px 32px rgba(0,0,0,0.2);"
+      ),
+      tags$div(
+        style = "display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;",
+        tags$h4(style = "margin:0;font-size:15px;color:#1F2B3A;", "Paste data from spreadsheet"),
+        tags$button(onclick = "closePasteModal()",
+          style = "background:none;border:none;font-size:20px;cursor:pointer;color:#888;padding:0;line-height:1;",
+          "\u00D7")
+      ),
+      tags$p(id = "paste_modal_hint",
+        style = "font-size:11px;color:#666;margin:0 0 10px;line-height:1.5;"),
+      tags$textarea(id = "paste_modal_textarea",
+        style = paste0(
+          "width:100%;height:200px;font-size:11px;font-family:monospace;",
+          "border:1px solid #ccc;border-radius:6px;padding:10px;box-sizing:border-box;",
+          "resize:vertical;"
+        ),
+        placeholder = "Select your data in Excel, copy (Ctrl+C / Cmd+C), then paste here (Ctrl+V / Cmd+V)..."
+      ),
+      tags$div(
+        style = "display:flex;align-items:center;gap:12px;margin-top:12px;",
+        tags$button(onclick = "applyPastedData()",
+          style = paste0(
+            "background:#009EDB;color:white;border:none;padding:7px 20px;border-radius:5px;",
+            "cursor:pointer;font-size:12px;font-weight:600;"
+          ),
+          "\u2713 Apply to table"),
+        tags$button(onclick = "closePasteModal()",
+          style = "background:#f5f5f5;color:#555;border:1px solid #ccc;padding:7px 16px;border-radius:5px;cursor:pointer;font-size:12px;",
+          "Cancel"),
+        tags$span(id = "paste_modal_status",
+          style = "font-size:11px;font-weight:600;")
+      )
+    )
+  ),
+
   # ── Login screen ──────────────────────────────────────────────────────────
   tags$div(
     id = "login_screen",
@@ -424,14 +542,14 @@ ui <- tagList(
                uiOutput("login_error")),
       tags$div(
         id = "admin_link",
-        style = "text-align:center;margin-top:16px;",
+        style = "text-align:center;margin-top:16px;position:relative;z-index:10;",
         tags$a(href = "#", onclick = "toggleAdminLogin(); return false;",
                style = "font-size:11px;color:#888;text-decoration:none;",
                "Admin access \u2192")
       ),
       tags$div(
         id = "admin_back_link",
-        style = "text-align:center;margin-top:16px;display:none;",
+        style = "text-align:center;margin-top:16px;display:none;position:relative;z-index:10;",
         tags$a(href = "#", onclick = "toggleAdminLogin(); return false;",
                style = "font-size:11px;color:#888;text-decoration:none;",
                "\u2190 Back to country login")
@@ -506,8 +624,33 @@ ui <- tagList(
                     tags$li("Data and responses are pre-filled with previous submissions but can be overwritten."),
                     tags$li("Your progress is", tags$b("auto-saved"), "and will be restored if you log out and back in."),
                     tags$li("Indicators marked", tags$span(style = "font-size:9px;background:#F89C1C;color:white;border-radius:3px;padding:1px 4px;", "\u26A0 Awaiting data input"),
-                            "still need your input.")
+                            "still need your input."),
+                    tags$li("Data can be entered manually or uploaded using the downloadable template.")
                   )
+                )
+              ),
+              column(1)
+            ),
+            # ── Bulk upload / download row ──────────────────────────────
+            fluidRow(
+              column(1),
+              column(10,
+                tags$div(
+                  style = "display:flex;align-items:center;gap:16px;margin-bottom:16px;",
+                  downloadButton("dl_wb_template", "Download Excel template",
+                    style = paste0(
+                      "background:#009EDB;color:white;border:none;padding:8px 20px;border-radius:5px;",
+                      "font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;"
+                    )),
+                  tags$div(
+                    class = "upload-btn-wrap",
+                    fileInput("upload_wb_file", label = NULL, accept = ".xlsx",
+                              buttonLabel = tagList(icon("upload"), "Upload completed template"),
+                              placeholder = "No file selected",
+                              width = "auto")
+                  ),
+                  tags$span(id = "upload_wb_status",
+                            style = "font-size:11px;font-weight:600;")
                 )
               ),
               column(1)
@@ -565,7 +708,9 @@ ui <- tagList(
                             tags$b("1440 minutes"), "(24 hours). If it differs, you will be asked to provide a brief explanation."),
                     tags$li("Table 2 asks you to map your national activity codes to each OECD activity category."),
                     tags$li("Click", tags$b("\u2713 Submit table"), "to save each table separately.",
-                            "Your progress is", tags$b("auto-saved"), "and restored on your next login.")
+                            "Your progress is", tags$b("auto-saved"), "and restored on your next login."),
+                    tags$li("Data can be entered manually or uploaded using the Paste from spreadsheet feature.")
+
                   )
                 )
               ),
@@ -602,8 +747,16 @@ ui <- tagList(
                 ),
                 br(),
                 h4(HTML("Table 1. Time spent on daily activities (<u>minutes per day</u>)")),
-                tags$p(style = "font-size:11px;color:#888;margin:-4px 0 4px;",
-                       "Blue-highlighted rows are calculated automatically. Enter values in the white rows only."),
+                tags$div(
+                  style = "display:flex;align-items:center;gap:12px;margin:-4px 0 8px;",
+                  tags$p(style = "font-size:11px;color:#888;margin:0;",
+                         "Blue-highlighted rows are calculated automatically. Enter values in the white rows only."),
+                  tags$button(
+                    onclick = "openPasteModal('tu_table1', 2, 5)",
+                    style = "background:#f5f5f5;color:#555;border:1px solid #ccc;padding:5px 12px;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;",
+                    "\U0001F4CB Paste from spreadsheet"
+                  )
+                ),
                 uiOutput("time_use_table1_ui"),
                 tags$div(
                   id = "tu1_1440_warning",
@@ -624,7 +777,15 @@ ui <- tagList(
                                 rows = 2, placeholder = "Explain why the total differs from 1440 minutes\u2026")
                 ),
                 br(), br(),
-                h4("Table 2. Considering the activity coding list in the national time-use survey, please indicate which activity codes are grouped under each activity (e.g. 1.1. paid work)."),
+                tags$div(
+                  style = "display:flex;align-items:center;gap:12px;margin-bottom:8px;",
+                  h4(style = "margin:0;", "Table 2. Considering the activity coding list in the national time-use survey, please indicate which activity codes are grouped under each activity (e.g. 1.1. paid work)."),
+                  tags$button(
+                    onclick = "openPasteModal('tu_table2', 2, 3)",
+                    style = "background:#f5f5f5;color:#555;border:1px solid #ccc;padding:5px 12px;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;",
+                    "\U0001F4CB Paste from spreadsheet"
+                  )
+                ),
                 uiOutput("time_use_table2_ui")
               ),
               column(1)
@@ -689,33 +850,11 @@ ui <- tagList(
                 tags$h5(style = "font-weight:700;margin:0 0 8px;font-size:14px;color:#1F2B3A;",
                         "Contact & Support"),
                 tags$p(style = "font-size:12px;color:#55606B;line-height:1.7;margin:0;", HTML(
-                  "For questions about the questionnaire or data submissions:<br>",
+                  "For any technical issues or questions about data submissions:<br>",
                   "<a href='mailto:kate.chalmers@oecd.org' style='color:#009EDB;'>kate.chalmers@oecd.org</a><br>",
                   "<a href='mailto:lara.fleischer@oecd.org' style='color:#009EDB;'>lara.fleischer@oecd.org</a><br>",
                   "<a href='mailto:wellbeing@oecd.org' style='color:#009EDB;'>wellbeing@oecd.org</a>"
                 ))
-              ),
-              tags$div(
-                style = "flex:1;min-width:300px;",
-                tags$h5(style = "font-weight:700;margin:0 0 8px;font-size:14px;color:#1F2B3A;",
-                        "Feedback"),
-                tags$p(style = "font-size:11px;color:#888;margin:0 0 6px;",
-                       "Let us know if you encounter any issues or have suggestions."),
-                tags$textarea(
-                  id = "feedback_text",
-                  placeholder = "Type your feedback here\u2026",
-                  rows = "3",
-                  style = paste0(
-                    "width:100%;font-size:12px;font-family:inherit;border:1px solid #ccc;",
-                    "border-radius:4px;padding:8px;box-sizing:border-box;resize:vertical;"
-                  )
-                ),
-                tags$div(
-                  style = "margin-top:8px;display:flex;align-items:center;gap:10px;",
-                  actionButton("send_feedback_btn", "Send feedback",
-                               style = "background:#009EDB;color:white;border:none;padding:6px 16px;border-radius:4px;font-size:12px;font-weight:600;"),
-                  uiOutput("feedback_status", inline = TRUE)
-                )
               )
             )
           ),
@@ -1021,6 +1160,218 @@ server <- function(input, output, session) {
   # ── Helper: null coalescing ──────────────────────────────────────────────────
   `%||%` <- function(x, y) if (is.null(x)) y else x
 
+  # ── Well-being Excel template download ─────────────────────────────────────
+  output$dl_wb_template <- downloadHandler(
+    filename = function() {
+      paste0("wellbeing_template_", credentials$country, "_", Sys.Date(), ".xlsx")
+    },
+    content = function(file) {
+      req(credentials$authenticated, credentials$country)
+
+      iso <- credentials$country
+      is_eu_silc <- iso %in% eu_silc_countries
+      measures <- if (is_eu_silc) setdiff(xlsx_measures, eu_silc_measures) else xlsx_measures
+      # Exclude time-use measures (entered in Time Use tab)
+      measures <- setdiff(measures, time_use_measures)
+
+      d <- dat_rv()
+      years <- 2004:2026
+
+      # Row definitions are needed — replicate the logic from row_defs
+      age_labels_fn <- function(m) {
+        if (m %in% young_15_24) {
+          list(young = "Young (15-24 years)", middle_aged = "Middle-aged (25-64 years)", old = "Old (65+ years)")
+        } else if (m %in% young_16_24) {
+          list(young = "Young (16-24 years)", middle_aged = "Middle-aged (25-54 years)", old = "Old (55+ years)")
+        } else {
+          list(young = "Young (16-29 years)", middle_aged = "Middle-aged (30-49 years)", old = "Old (50+ years)")
+        }
+      }
+      row_defs_fn <- function(m) {
+        al <- age_labels_fn(m)
+        if (m %in% all_rows) {
+          list(
+            list(key = "country_avg", label = "Country average"),
+            list(key = "male",        label = "Male"),
+            list(key = "female",      label = "Female"),
+            list(key = "young",       label = al$young),
+            list(key = "middle_aged", label = al$middle_aged),
+            list(key = "old",         label = al$old),
+            list(key = "primary",     label = "Primary (ISCED levels 0-2)"),
+            list(key = "secondary",   label = "Secondary (ISCED levels 3-4)"),
+            list(key = "tertiary",    label = "Tertiary (ISCED levels 5-8)")
+          )
+        } else if (exists("all_rows_dep_vert") && m %in% all_rows_dep_vert) {
+          list(
+            list(key = "country_avg", label = "Country average"),
+            list(key = "vert",        label = "Vertical inequality"),
+            list(key = "dep",         label = "Deprivation"),
+            list(key = "male",        label = "Male"),
+            list(key = "female",      label = "Female"),
+            list(key = "young",       label = al$young),
+            list(key = "middle_aged", label = al$middle_aged),
+            list(key = "old",         label = al$old),
+            list(key = "primary",     label = "Primary (ISCED levels 0-2)"),
+            list(key = "secondary",   label = "Secondary (ISCED levels 3-4)"),
+            list(key = "tertiary",    label = "Tertiary (ISCED levels 5-8)")
+          )
+        } else if (m %in% gender_only) {
+          list(
+            list(key = "country_avg", label = "Country average"),
+            list(key = "male",        label = "Male"),
+            list(key = "female",      label = "Female")
+          )
+        } else {
+          list(list(key = "country_avg", label = "Country average"))
+        }
+      }
+
+      val_lookup <- d %>%
+        filter(sex == "_T", age == "_T", education_lev == "_T") %>%
+        select(measure, time_period, obs_value) %>%
+        mutate(time_period = as.numeric(time_period))
+
+      sheets <- list()
+      for (m in measures) {
+        rows <- row_defs_fn(m)
+        lbl <- dict %>% filter(measure == m) %>% pull(label) %>% first()
+        lbl <- if (is.na(lbl) || is.null(lbl)) m else lbl
+
+        # Build data frame: breakdown_key, breakdown_label, then year columns
+        df <- data.frame(
+          breakdown_key   = sapply(rows, `[[`, "key"),
+          breakdown_label = sapply(rows, `[[`, "label"),
+          stringsAsFactors = FALSE
+        )
+        # Add year columns with existing data pre-filled
+        for (yr in years) {
+          vals <- sapply(rows, function(r) {
+            # Check session data first
+            saved <- session_data$entries[[m]]
+            if (!is.null(saved) && !is.null(saved[[r$key]]) &&
+                !is.null(saved[[r$key]][[as.character(yr)]])) {
+              return(as.numeric(saved[[r$key]][[as.character(yr)]]))
+            }
+            # Fall back to existing database values (country_avg only)
+            if (r$key == "country_avg") {
+              existing <- val_lookup %>%
+                filter(measure == m, time_period == yr)
+              if (nrow(existing) > 0 && !is.na(existing$obs_value[1]))
+                return(existing$obs_value[1])
+            }
+            return(NA_real_)
+          })
+          df[[as.character(yr)]] <- vals
+        }
+
+        # Sanitise sheet name (max 31 chars, no special chars)
+        sheet_name <- paste0(m, " - ", substr(lbl, 1, 25))
+        sheet_name <- gsub("[\\[\\]:*?/\\\\]", "", sheet_name)
+        sheet_name <- substr(sheet_name, 1, 31)
+        sheets[[sheet_name]] <- df
+      }
+
+      # Add a README sheet
+      readme <- data.frame(
+        Instructions = c(
+          paste0("Well-being data template for ", names(country_name_vector)[country_name_vector == iso]),
+          "",
+          "Each sheet corresponds to one indicator.",
+          "Column A (breakdown_key) identifies the breakdown — do NOT modify this column.",
+          "Column B (breakdown_label) is a human-readable label for reference.",
+          "Columns C onward are years (2004–2026).",
+          "Enter numeric values in the year columns. Leave cells blank if no data.",
+          "Existing data has been pre-filled where available.",
+          "",
+          "When finished, save this file and upload it using the 'Upload completed template' button.",
+          "",
+          "Data flags (B, E, P, D, U) can be set in the app after upload.",
+          paste0("Generated: ", Sys.Date())
+        ),
+        stringsAsFactors = FALSE
+      )
+      sheets <- c(list(README = readme), sheets)
+
+      writexl::write_xlsx(sheets, file)
+    }
+  )
+
+  # ── Well-being Excel template upload ───────────────────────────────────────
+  observeEvent(input$upload_wb_file, {
+    req(credentials$authenticated)
+    file_info <- input$upload_wb_file
+    req(file_info)
+
+    tryCatch({
+      sheet_names <- readxl::excel_sheets(file_info$datapath)
+      # Skip the README sheet
+      data_sheets <- setdiff(sheet_names, "README")
+
+      n_measures <- 0
+      n_values   <- 0
+      warnings   <- character()
+
+      for (sn in data_sheets) {
+        df <- readxl::read_excel(file_info$datapath, sheet = sn, col_types = "text")
+
+        if (!"breakdown_key" %in% names(df)) {
+          warnings <- c(warnings, paste0("Sheet '", sn, "': missing breakdown_key column, skipped."))
+          next
+        }
+
+        # Extract measure code from sheet name (before " - ")
+        m <- trimws(sub(" - .*$", "", sn))
+        if (!m %in% xlsx_measures) {
+          warnings <- c(warnings, paste0("Sheet '", sn, "': measure '", m, "' not recognised, skipped."))
+          next
+        }
+
+        # Year columns are those that look like 4-digit years
+        year_cols <- grep("^\\d{4}$", names(df), value = TRUE)
+        if (length(year_cols) == 0) {
+          warnings <- c(warnings, paste0("Sheet '", sn, "': no year columns found, skipped."))
+          next
+        }
+
+        # Build entry structure: list(breakdown_key = list(year = value))
+        entry <- session_data$entries[[m]] %||% list()
+        for (i in seq_len(nrow(df))) {
+          bk <- df$breakdown_key[i]
+          if (is.na(bk) || !nzchar(bk)) next
+          if (is.null(entry[[bk]])) entry[[bk]] <- list()
+          for (yr in year_cols) {
+            val <- df[[yr]][i]
+            if (!is.na(val) && nzchar(val)) {
+              num_val <- suppressWarnings(as.numeric(val))
+              if (!is.na(num_val)) {
+                entry[[bk]][[yr]] <- num_val
+                n_values <- n_values + 1
+              }
+            }
+          }
+        }
+        session_data$entries[[m]] <- entry
+        n_measures <- n_measures + 1
+      }
+
+      msg <- paste0("\u2713 Uploaded data for ", n_measures, " indicator(s) (",
+                     n_values, " values populated).")
+      if (length(warnings) > 0) {
+        msg <- paste0(msg, " Warnings: ", paste(warnings, collapse = " "))
+      }
+      runjs(paste0(
+        "var el = document.getElementById('upload_wb_status');",
+        "if(el){ el.style.color='#1F7A4D'; el.innerText='", gsub("'", "\\\\'", msg), "'; }"
+      ))
+    }, error = function(e) {
+      runjs(paste0(
+        "var el = document.getElementById('upload_wb_status');",
+        "if(el){ el.style.color='#E63312'; el.innerText='Error reading file: ",
+        gsub("'", "\\\\'", conditionMessage(e)), "'; }"
+      ))
+    })
+  })
+
   # ── Time Use table builder ───────────────────────────────────────────────────
   make_time_use_table <- function(n_rows, col_names, n_text_cols, table_id,
                                    row_text = NULL, saved = NULL,
@@ -1212,6 +1563,11 @@ server <- function(input, output, session) {
     d <- dat_rv()
     req(!is.null(d) && nrow(d) > 0)
 
+    # Heatmap only shows _T aggregates and excludes _DEP/_VER measures
+    d <- d %>% filter(sex == "_T", age == "_T", education_lev == "_T",
+                      !grepl("_DEP$|_VER$", measure))
+    heatmap_measures <- unique(measure_list$measure[!grepl("_DEP$|_VER$", measure_list$measure)])
+
     entries <- session_data$entries
     years   <- 2004:2026
 
@@ -1259,11 +1615,11 @@ server <- function(input, output, session) {
     # Build chart lookups with prefixed IDs for each heatmap
     make_charts_lookup <- function(prefix) {
       setNames(
-        lapply(unique(measure_list$measure), function(m) {
+        lapply(heatmap_measures, function(m) {
           if (m %in% time_use_measures) return("")
           make_year_chart(m, prefix)
         }),
-        unique(measure_list$measure)
+        heatmap_measures
       )
     }
     sub_charts_lookup <- make_charts_lookup("sub_")
@@ -1272,7 +1628,7 @@ server <- function(input, output, session) {
     # dat_tidy: full grid of measures × years
     dat_tidy <- d %>%
       select(measure, time_period, obs_value) %>%
-      complete(measure = unique(measure_list$measure), time_period = years) %>%
+      complete(measure = heatmap_measures, time_period = years) %>%
       mutate(measure2 = measure) %>%
       separate(measure2, into = c("cat", "subcat")) %>%
       mutate(cat = as.numeric(cat), subcat = as.numeric(subcat)) %>%
@@ -1358,7 +1714,8 @@ server <- function(input, output, session) {
       } else if (exists("all_rows_dep_vert") && m %in% all_rows_dep_vert) {
         list(
           list(key="country_avg", label="Country average",       bold=TRUE),
-          list(key="vert",        label="Vertical inequality",   bold=FALSE),
+          list(key="vert",        label="Vertical inequality",   bold=FALSE,
+               tooltip="To calculate vertical inequality data (bottom 20% and top 20%), sort the data you have from the lowest score given to the highest level of the indicator declared, and (after weighting) you divide the results in five equal parts. Then, calculate the average of the group with the highest 20% and lowest 20% of scores."),
           list(key="dep",         label="Deprivation",           bold=FALSE),
           list(key="male",        label="Male",                  bold=FALSE),
           list(key="female",      label="Female",                bold=FALSE),
@@ -1456,10 +1813,14 @@ server <- function(input, output, session) {
             "</div>"
           )
         })
+        tip_html <- if (!is.null(r$tooltip)) {
+          paste0("<span class='info-tooltip'>\u2139\uFE0E",
+                 "<span class='tooltip-text'>", htmltools::htmlEscape(r$tooltip), "</span></span>")
+        } else ""
         paste0(
           "<div style='display:flex;align-items:center;margin-bottom:3px;'>",
           "<div style='flex:0 0 150px;font-size:11px;color:#444;padding-right:6px;text-align:right;",
-          if (r$bold) "font-weight:600;" else "", "'>", r$label, "</div>",
+          if (r$bold) "font-weight:600;" else "", "'>", r$label, tip_html, "</div>",
           "<div style='flex:1;display:flex;'>", paste(cells, collapse=""), "</div></div>"
         )
       })
@@ -1639,7 +2000,19 @@ server <- function(input, output, session) {
 
           is_no_update = measure %in% no_update_measures,
 
-          panel_body = mapply(function(ni, itu, sid, mn, yi, yc, q, oqh, cqh, def, tech, unt, lbl, is_nu) {
+          comment_html = sapply(measure, function(m) {
+            country_comments <- oecd_comments[[country_iso]]
+            cmt <- if (!is.null(country_comments) && m %in% names(country_comments)) country_comments[[m]] else NULL
+            if (is.null(cmt) || !nzchar(cmt)) return("")
+            paste0(
+              "<div style='background:#f0f6ff;border:1px solid #c5d7ee;border-radius:6px;padding:10px 14px;margin-bottom:12px;'>",
+              "<strong style='font-size:12px;color:#003189;'>OECD Comment</strong>",
+              "<p style='font-size:11px;color:#444;margin:4px 0 0;line-height:1.5;'>",
+              htmltools::htmlEscape(cmt), "</p></div>"
+            )
+          }),
+
+          panel_body = mapply(function(ni, itu, sid, mn, yi, yc, q, oqh, cqh, def, tech, unt, lbl, is_nu, cmth) {
             if (ni) {
               nu_active <- if (is_nu) " active" else ""
               paste0(
@@ -1719,6 +2092,7 @@ server <- function(input, output, session) {
             "</div>",
             "<div id='panel_", safe_id, "' class='collapsible-panel' style='display:none;flex-direction:column;gap:14px;padding:16px;margin-bottom:6px;",
             panel_border, "'>",
+            comment_html,
             panel_body,
             "</div>"
           )

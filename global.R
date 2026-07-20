@@ -3,6 +3,7 @@ library(shiny)
 library(shinyjs)
 library(echarts4r)
 library(DT)
+library(writexl)
 
 
 oecd_countries <- c("AUS", "AUT", "BEL", "CAN", "CHL", "COL", "CZE", "DNK", "EST", "FIN",
@@ -43,16 +44,15 @@ xlsx_response_format <- readRDS("./data/response_input.RDS")
 
 measure_list <- dict %>% 
   distinct(measure) %>% 
-  filter(!grepl("_DEP", measure), !grepl("_VER", measure),
-          !grepl("11_3_", measure)) 
+  filter(!grepl("11_3_", measure)) 
 
 
 dat <- readRDS("./data/final dataset.RDS") %>%
   select(-base_per) %>%
   rbind(readRDS("./data/5_5 Request data.RDS")) %>%
-  filter(sex == "_T", age == "_T", education_lev == "_T",
-         measure %in% unique(measure_list$measure)) %>%
+  filter(measure %in% unique(measure_list$measure)) %>%
   mutate(time_period = as.numeric(time_period))
+
 
 current_year <- format(Sys.Date(), "%Y")
 
@@ -202,3 +202,18 @@ country_prefill <- lapply(.prev_resp_raw, function(country_df) {
   }), measures)
 })
 rm(.prev_resp_raw)
+
+# ── OECD comments per country × measure ─────────────────────────────────────
+# Excel file with columns: ref_area (ISO3), measure, comment
+# Loaded as a nested list: oecd_comments[["AUT"]][["1_5"]] → "comment text"
+oecd_comments_file <- "data/oecd_comments.xlsx"
+oecd_comments <- if (file.exists(oecd_comments_file)) {
+  .cmt_raw <- readxl::read_excel(oecd_comments_file) %>%
+    filter(!is.na(comment), nzchar(comment))
+  .cmt_list <- split(.cmt_raw, .cmt_raw$ref_area)
+  res <- lapply(.cmt_list, function(df) setNames(as.character(df$comment), df$measure))
+  rm(.cmt_raw, .cmt_list)
+  res
+} else {
+  list()
+}

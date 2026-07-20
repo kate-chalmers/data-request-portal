@@ -371,5 +371,76 @@ textarea.form-control {
   border-color: var(--oecd-green) !important;
 }
 
+/* ── Upload button: match download button styling ────────────────────────── */
+.upload-btn-wrap .form-group {
+  margin-bottom: 0 !important;
+}
+.upload-btn-wrap .control-label {
+  display: none !important;
+}
+.upload-btn-wrap .input-group .form-control {
+  display: none !important;
+}
+.upload-btn-wrap .btn-file {
+  background: #009EDB !important;
+  color: white !important;
+  border: none !important;
+  padding: 8px 20px !important;
+  border-radius: 5px !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  white-space: nowrap;
+}
+.upload-btn-wrap .btn-file:hover {
+  background: #0080b8 !important;
+}
+.upload-btn-wrap .progress {
+  margin-top: 4px;
+  height: 4px;
+  border-radius: 2px;
+}
+
+/* ── Info tooltip (hover) ────────────────────────────────────────────────── */
+.info-tooltip {
+  position: relative;
+  display: inline-block;
+  cursor: help;
+  color: #888;
+  font-size: 11px;
+  margin-left: 3px;
+  vertical-align: middle;
+}
+.info-tooltip .tooltip-text {
+  visibility: hidden;
+  opacity: 0;
+  position: absolute;
+  z-index: 200;
+  bottom: calc(100% + 6px);
+  right: -8px;
+  width: 300px;
+  background: #1F2B3A;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.55;
+  padding: 10px 14px;
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+.info-tooltip .tooltip-text::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  right: 12px;
+  border: 6px solid transparent;
+  border-top-color: #1F2B3A;
+}
+.info-tooltip:hover .tooltip-text {
+  visibility: visible;
+  opacity: 1;
+}
+
 /* ── Misc utilities ──────────────────────────────────────────────────────── */
 hr { border-color: var(--oecd-border) !important; }
