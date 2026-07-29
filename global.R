@@ -14,11 +14,11 @@ oecd_countries <- c("AUS", "AUT", "BEL", "CAN", "CHL", "COL", "CZE", "DNK", "EST
 eu_silc_countries <- c("AUT", "BEL", "BGR", "CYP", "CZE", "DNK", "EST", "FIN", "FRA",
                        "DEU", "GRC", "HUN", "ISL", "IRL", "ITA", "LVA", "LTU", "LUX",
                        "MLT", "NLD", "NOR", "POL", "PRT", "ROU", "SRB", "SVK", "SVN",
-                       "ESP", "SWE", "CHE")
+                       "ESP", "SWE", "CHE", "TUR")
 
 partner_countries <- c("BRA", "ARG", "BGR", "HRV", "PER", "ROU", "IDN", "THA", "ZAF")
 
-oecd_names <- c("Australia", "Austria", "Belgium", "Canada", "Chile", "Colombia", "Czech Republic", "Denmark", "Estonia",
+oecd_names <- c("Australia", "Austria", "Belgium", "Canada", "Chile", "Colombia", "Czechia", "Denmark", "Estonia",
                 "Finland", "France", "Germany", "Greece", "Hungary", "Iceland", "Ireland", "Israel", "Italy", "Japan",
                 "Korea", "Latvia", "Lithuania", "Luxembourg", "Mexico", "Netherlands", "New Zealand", "Norway", "Poland",
                 "Portugal", "Slovak Republic", "Slovenia", "Spain", "Sweden", "Switzerland", "Türkiye", "United Kingdom",
@@ -44,7 +44,12 @@ xlsx_response_format <- readRDS("./data/response_input.RDS")
 
 measure_list <- dict %>% 
   distinct(measure) %>% 
-  filter(!grepl("11_3_", measure)) 
+  filter(!grepl("11_3_", measure)) %>%
+  # Remove duplicates with no data
+  filter(!measure %in% c("6_6", "10_2_GAP"))
+
+# Measures to hide from the coverage heatmap (not yet published)
+coverage_hidden <- c("5_5")
 
 
 dat <- readRDS("./data/final dataset.RDS") %>%
@@ -53,6 +58,16 @@ dat <- readRDS("./data/final dataset.RDS") %>%
   filter(measure %in% unique(measure_list$measure)) %>%
   mutate(time_period = as.numeric(time_period))
 
+
+# ── Non-used responses (submitted but not incorporated) ──────────────────────
+nonused_dat <- if (file.exists("data/non-used responses.RDS")) {
+  readRDS("data/non-used responses.RDS")
+} else {
+  data.frame(measure = character(), ref_area = character(),
+             sex = character(), age = character(),
+             education_lev = character(), time_period = numeric(),
+             obs_value = numeric())
+}
 
 current_year <- format(Sys.Date(), "%Y")
 
@@ -86,14 +101,17 @@ validation_ranges <- c(
 
 # ── Data-entry row types for xlsx measures ────────────────────────────────────
 # Each xlsx measure belongs to exactly one category.
-# country_average_only : one row  — "Country average"
-# gender_only          : three rows — Country average / Male / Female
-# all_rows             : nine rows  — Country avg + M/F + age + education
+# country_average_only   : one row  — "Country average"
+# no_country_average     : breakdowns only (M/F + age + education), no country avg
+# gender_only            : three rows — Country average / Male / Female
+# all_rows               : full set — Country avg + M/F + age + education
+# all_rows_dep_vert      : full set + vertical inequality + deprivation
 # Unassigned measures fall back to country_average_only.
 
 country_average_only <- c("1_5", "3_5", "4_2", "9_1")
+no_country_average <- c("8_2")
 gender_only <- c("4_3")
-all_rows <- c("4_1", "5_4", "5_5", "7_2", "7_4", "8_2", "14_1", "14_2")
+all_rows <- c("4_1", "5_4", "5_5", "7_2", "7_4", "14_1", "14_2")
 all_rows_dep_vert <- c("2_9", "4_4", "7_3", "11_1")
 
 
