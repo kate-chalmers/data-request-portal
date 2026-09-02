@@ -1,0 +1,20 @@
+{
+  "permission": {
+    "executeCode": {
+      "*": "allow"
+    },
+    "edit": {
+      "*.R": "allow",
+      "*.css": "allow"
+    },
+    "bash": {
+      "Rscript *": "allow",
+      "tail *": "allow",
+      "*": "allow",
+      "grep *": "allow"
+    },
+    "read": {
+      "*.R": "allow"
+    }
+  }
+}

@@ -1,0 +1,16 @@
+source("./global.R")
+source("./NO DEPLOY/utils_processing.R")
+library(tidyverse)
+
+# Replace with break treated
+dat <- readRDS("S:/Data/WDP/Well being database/Automated database/output/final dataset.RDS") %>%
+  filter(sex == "_T", age == "_T", education_lev == "_T",
+         measure %in% unique(measure_list$measure),
+         ref_area %in% oecd_countries) %>%
+  mutate(time_period = as.numeric(time_period)) %>%
+  select(-age, -sex, -education_lev, -base_per, -obs_status) %>%
+  mutate(dimension = "_T") 
+
+oecd_avg <- dat %>% timeSeriesAverage(., "_T")
+
+saveRDS(oecd_avg, "./data/oecd average.RDS")
