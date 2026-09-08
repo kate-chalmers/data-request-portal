@@ -14,3 +14,4 @@ dat <- readRDS("S:/Data/WDP/Well being database/Automated database/output/final 
 oecd_avg <- dat %>% timeSeriesAverage(., "_T")
 
 saveRDS(oecd_avg, "./data/oecd average.RDS")
+
