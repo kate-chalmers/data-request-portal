@@ -15,17 +15,15 @@ eu_silc_countries <- c("AUT", "BEL", "BGR", "CYP", "CZE", "DNK", "EST", "FIN", "
                        "MLT", "NLD", "NOR", "POL", "PRT", "ROU", "SRB", "SVK", "SVN",
                        "ESP", "SWE", "CHE", "TUR")
 
-partner_countries <- c("BRA", "ARG", "BGR", "HRV", "PER", "ROU", "IDN", "THA", "ZAF")
-
 oecd_names <- c("Australia", "Austria", "Belgium", "Canada", "Chile", "Colombia", "Czechia", "Denmark", "Estonia",
                 "Finland", "France", "Germany", "Greece", "Hungary", "Iceland", "Ireland", "Israel", "Italy", "Japan",
                 "Korea", "Latvia", "Lithuania", "Luxembourg", "Mexico", "Netherlands", "New Zealand", "Norway", "Poland",
                 "Portugal", "Slovak Republic", "Slovenia", "Spain", "Sweden", "Switzerland", "Türkiye", "United Kingdom",
                 "United States", "Costa Rica")
 
-partner_countries <- c("BRA", "ARG", "BGR", "HRV", "PER", "ROU", "IDN", "THA", "ZAF")
+partner_countries <- c("BRA", "ARG", "BGR", "HRV", "PER", "ROU", "IDN", "THA", "ZAF", "UKR")
 
-partner_names <- c("Brazil", "Argentina", "Bulgaria", "Croatia", "Peru", "Romania", "Indonesia", "Thailand", "South Africa")
+partner_names <- c("Brazil", "Argentina", "Bulgaria", "Croatia", "Peru", "Romania", "Indonesia", "Thailand", "South Africa", "Ukraine")
 
 country_name_vector <- c(
   setNames(oecd_countries, oecd_names),

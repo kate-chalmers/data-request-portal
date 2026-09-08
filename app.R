@@ -755,7 +755,9 @@ ui <- tagList(
                     tags$li("Data and responses are pre-filled with previous submissions but can be overwritten."),
                     tags$li("Please enter the figures themselves in the portal. A link to a national database or publication is very welcome as a source, and the",
                             tags$b("Other useful information"), "box is the perfect place for it, but we are only able to take up values that are actually submitted here. A link on its own, unfortunately, cannot be processed. If you have a lot of values to enter, the Excel template below is the quickest way to do it."),
-                    tags$li("Use", tags$b("Save and continue"), "to store your progress and update the heatmap without marking the indicator complete; your draft will be restored when you log back in. Press",
+                    tags$li("Use", tags$b("Save and continue"), "to store your progress without marking the indicator complete; your draft will be restored when you log back in.",
+                            tags$b("Save and continue never changes the heatmap"), "- only",
+                            tags$b("\u2713 Submit"), "does. Press",
                             tags$b("\u2713 Submit"), "when you are ready to mark the indicator complete."),
                     tags$li("Indicators marked", tags$span(style = "font-size:9px;background:#F89C1C;color:white;border-radius:3px;padding:1px 4px;", "\u26A0 Awaiting data input"),
                             "still need your input; those marked",
@@ -1258,8 +1260,9 @@ server <- function(input, output, session) {
   chart_cache <- new.env(parent = emptyenv())
   chart_cache$key <- NULL
   # Bumped by explicit user actions that should refresh the heatmap/panels:
-  # Submit, "Save and continue", no-update toggle, template upload, backup
-  # restore. Nothing else invalidates this expensive rebuild.
+  # Submit, no-update toggle, template upload, backup restore. Nothing else
+  # invalidates this expensive rebuild - in particular "Save and continue"
+  # deliberately does not, so drafting never moves the heatmap.
   ui_refresh <- reactiveVal(0)
   bump_ui <- function() ui_refresh(isolate(ui_refresh()) + 1)
   dat_rv      <- reactiveVal(NULL)
@@ -2275,7 +2278,10 @@ server <- function(input, output, session) {
     # user action and the underlying data. Everything else is isolated.
     ui_refresh()
     d <- dat_rv()
-    req(!is.null(d) && nrow(d) > 0)
+    # Countries with no published data at all (e.g. UKR) legitimately give a
+    # zero-row frame: build the empty grid rather than req()-ing out, which
+    # would leave the heatmap spinner running forever.
+    req(!is.null(d))
 
     # Keep full data for pre-filling all breakdowns in the input panels
     d_full <- d %>%
@@ -2697,6 +2703,16 @@ server <- function(input, output, session) {
 
     revisions <- isolate(committed_revisions())
 
+    # Only an explicit Submit may colour the heatmap. Values conserved by
+    # "Save and continue" (or loaded by a template upload) live in
+    # session_data/committed_entries so the input panels keep them, but they
+    # are filtered out here so the heatmap stays exactly as it was.
+    explicit_submit_now <- isolate(session_data$explicit_submit)
+    submitted_measures <- names(explicit_submit_now)[
+      vapply(explicit_submit_now, isTRUE, logical(1))
+    ]
+    entries <- entries[names(entries) %in% submitted_measures]
+
     submitted_df <- if (length(entries) > 0) {
       is_filled <- function(v) !is.null(v) && !is.na(v) && v != ""
       bind_rows(lapply(names(entries), function(m) {
@@ -2737,6 +2753,14 @@ server <- function(input, output, session) {
               o <- d_full$obs_value[d_full$measure == meas & d_full$sex == sx &
                                     d_full$age == ag & d_full$education_lev == ed &
                                     d_full$time_period == as.numeric(yr)]
+              # Previously submitted (not used) figures count as existing data
+              # too: overwriting one with a different value is a revision of
+              # existing data, not a fresh submission.
+              if (length(o) == 0 || is.na(o[1])) {
+                o <- d_nonused$obs_value[d_nonused$measure == meas & d_nonused$sex == sx &
+                                         d_nonused$age == ag & d_nonused$education_lev == ed &
+                                         d_nonused$time_period == as.numeric(yr)]
+              }
               length(o) > 0 && !is.na(o[1]) && abs(v - o[1]) > 1e-8
             }, logical(1)))
           }, logical(1)),
@@ -2748,14 +2772,6 @@ server <- function(input, output, session) {
       data.frame(measure = character(), time_period = numeric(),
                  submitted = logical(), differs = logical(), revised = logical())
     }
-
-    # Measures the user has explicitly confirmed via the Submit button.
-    # Uploading a template or using "Save and continue" populates entries
-    # but must NOT mark an indicator complete - only an explicit Submit does.
-    explicit_submit_now <- isolate(session_data$explicit_submit)
-    submitted_measures <- names(explicit_submit_now)[
-      vapply(explicit_submit_now, isTRUE, logical(1))
-    ]
 
     # Measures marked "no data update to declare"
     no_updates_now <- isolate(session_data$no_updates)
@@ -2869,8 +2885,12 @@ server <- function(input, output, session) {
             revised_cleared                                 ~ "#009EDB",
             revised_session                                 ~ "#B4530A",
             !is.na(obs_value)                               ~ "#1F7A4D",
-            submitted                                       ~ "#F89C1C",
+            # Existing data (green, above) and previously submitted-but-not-used
+            # (purple, here) both outrank "submitted this session": resubmitting
+            # such a cell unchanged must leave its colour alone. Only a value
+            # that actually differs flips it, via revised_existing above.
             !coverage_mode & has_nonused                    ~ "#C4B5D4",
+            submitted                                       ~ "#F89C1C",
             coverage_mode & is_no_concern & n_countries > 0 ~ "#FCE4B8",
             coverage_mode & n_countries > 0                 ~ gap_color,
             TRUE                                            ~ "#D9DDE3"
@@ -3157,26 +3177,26 @@ server <- function(input, output, session) {
     invisible(n_revised)
   }
 
-  # Persist a measure's values via store_measure() AND immediately publish
-  # the change to the committed snapshot so the heatmap and panels reflect
-  # it. "Save and continue" and "Submit data" conserve values identically -
-  # both call this - the only thing Submit does on top is mark the measure
-  # complete (session_data$explicit_submit).
-  commit_measure <- function(d, record_revisions = TRUE) {
+  # Persist a measure's values via store_measure() AND publish the change to
+  # the committed snapshot so the input panels keep them. "Save and continue"
+  # and "Submit data" conserve values identically - both call this - but only
+  # Submit marks the measure complete (session_data$explicit_submit) and only
+  # Submit rebuilds the heatmap (refresh_ui).
+  commit_measure <- function(d, record_revisions = TRUE, refresh_ui = TRUE) {
     n_revised <- store_measure(d, record_revisions = record_revisions)
     committed_entries(session_data$entries)
     committed_revisions(session_data$revisions)
-    bump_ui()
+    if (refresh_ui) bump_ui()
     invisible(n_revised)
   }
 
-  # "Save and continue": user-triggered draft save. Conserves values and
-  # refreshes the heatmap exactly like Submit, but does NOT mark the
-  # indicator complete - that only happens on an explicit Submit click.
+  # "Save and continue": user-triggered draft save. Conserves values but must
+  # NEVER touch the heatmap - no rebuild here, and the rebuild triggered by
+  # any later action ignores measures that were never explicitly submitted.
   observeEvent(input$saved_draft_data, {
     req(credentials$authenticated)
     d <- input$saved_draft_data
-    commit_measure(d, record_revisions = TRUE)
+    commit_measure(d, record_revisions = TRUE, refresh_ui = FALSE)
     runjs(paste0("
       var el = document.getElementById('status_", d$safe_id, "');
       if(el) { el.style.color = '#888'; el.innerText = 'Draft saved at ", format(Sys.time(), "%H:%M:%S"), "'; }
