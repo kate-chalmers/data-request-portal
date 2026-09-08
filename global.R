@@ -100,20 +100,114 @@ validation_ranges <- c(
   setNames(lapply(minutes_day_indics, function(m) list(min = -120, max = 120)), minutes_day_indics)
 )
 
+# Row-level overrides: a handful of breakdown rows use a different valid
+# range than the rest of their measure's rows. Currently this only applies
+# to the "Deprivation" row within all_rows_dep_vert measures (2_9, 4_4, 7_3,
+# 11_1) - it's a share of people scoring <=4, i.e. a 0-100 percentage, even
+# though those measures' other rows (Country average, population groups) use
+# a 0-10 scale. "Vertical inequality" (row key "vert") is left on the
+# measure's default 0-10 range. Keyed by row key (data-row), applied across
+# any measure that uses that row key.
+row_validation_overrides <- list(
+  dep = list(min = 0, max = 100)
+)
+
 # ── Data-entry row types for xlsx measures ────────────────────────────────────
 # Each xlsx measure belongs to exactly one category.
-# country_average_only   : one row  — "Country average"
+# country_average_only   : one row  - "Country average"
 # no_country_average     : breakdowns only (M/F + age + education), no country avg
-# gender_only            : three rows — Country average / Male / Female
-# all_rows               : full set — Country avg + M/F + age + education
+# gender_only            : three rows - Country average / Male / Female
+# all_rows               : full set - Country avg + M/F + age + education
 # all_rows_dep_vert      : full set + vertical inequality + deprivation
 # Unassigned measures fall back to country_average_only.
 
 country_average_only <- c("1_5", "3_5", "4_2", "9_1")
 no_country_average <- c("8_2")
+
+# ── Static per-indicator notes ────────────────────────────────────────────────
+# Shown in a highlighted box at the top of the indicator's data-entry panel.
+# measure code → note text (plain text; HTML is escaped).
+measure_notes <- list(
+  "8_2" = paste0(
+    "For voter turnout we are only asking for data broken down by population ",
+    "group (sex, age and education level), not country-level figures. ",
+    "The heatmap on this tab therefore reflects population-group data only. ",
+    "Country-level voter turnout shown in the Well-being Data Coverage tab is ",
+    "sourced separately and may look different."
+  )
+)
 gender_only <- c("4_3")
 all_rows <- c("4_1", "5_4", "5_5", "7_2", "7_4", "14_1", "14_2")
 all_rows_dep_vert <- c("2_9", "4_4", "7_3", "11_1")
+
+
+# ── Shared breakdown-row definitions ──────────────────────────────────────────
+# Which rows an indicator is collected on, and how each row maps onto the
+# published data's sex / age / education dimensions. Used by the Excel template
+# download and by the record copy of a country's submission, so the two always
+# describe the same rows.
+
+dl_age_labels <- function(m) {
+  if (m %in% young_15_24) {
+    list(young = "Young (15-24 years)", middle_aged = "Middle-aged (25-64 years)", old = "Old (65+ years)")
+  } else if (m %in% young_16_24) {
+    list(young = "Young (16-24 years)", middle_aged = "Middle-aged (25-54 years)", old = "Old (55+ years)")
+  } else {
+    list(young = "Young (16-29 years)", middle_aged = "Middle-aged (30-49 years)", old = "Old (50+ years)")
+  }
+}
+
+dl_row_defs <- function(m) {
+  al <- dl_age_labels(m)
+  edu_rows <- list(
+    list(key = "primary",     label = "Primary (ISCED levels 0-2)"),
+    list(key = "secondary",   label = "Secondary (ISCED levels 3-4)"),
+    list(key = "tertiary",    label = "Tertiary (ISCED levels 5-8)")
+  )
+  demo_rows <- c(
+    list(
+      list(key = "male",        label = "Male"),
+      list(key = "female",      label = "Female"),
+      list(key = "young",       label = al$young),
+      list(key = "middle_aged", label = al$middle_aged),
+      list(key = "old",         label = al$old)
+    ),
+    edu_rows
+  )
+  if (m %in% no_country_average) {
+    demo_rows
+  } else if (m %in% all_rows) {
+    c(list(list(key = "country_avg", label = "Country average")), demo_rows)
+  } else if (m %in% all_rows_dep_vert) {
+    c(list(list(key = "country_avg", label = "Country average"),
+           list(key = "vert",        label = "Vertical inequality"),
+           list(key = "dep",         label = "Deprivation")),
+      demo_rows)
+  } else if (m %in% gender_only) {
+    list(
+      list(key = "country_avg", label = "Country average"),
+      list(key = "male",        label = "Male"),
+      list(key = "female",      label = "Female")
+    )
+  } else {
+    list(list(key = "country_avg", label = "Country average"))
+  }
+}
+
+# Breakdown key → the sex / age / education combination it corresponds to in
+# the published data. The vert/dep rows are separate measures (_VER/_DEP) and
+# so are handled separately by callers.
+breakdown_filter_map <- list(
+  country_avg = list(sex = "_T", age = "_T", edu = "_T"),
+  male        = list(sex = "M",  age = "_T", edu = "_T"),
+  female      = list(sex = "F",  age = "_T", edu = "_T"),
+  young       = list(sex = "_T", age = "YOUNG", edu = "_T"),
+  middle_aged = list(sex = "_T", age = "MID",   edu = "_T"),
+  old         = list(sex = "_T", age = "OLD",   edu = "_T"),
+  primary     = list(sex = "_T", age = "_T", edu = "ISCED11_1"),
+  secondary   = list(sex = "_T", age = "_T", edu = "ISCED11_2_3"),
+  tertiary    = list(sex = "_T", age = "_T", edu = "ISCED11_5T8")
+)
 
 
 # ── Time Use Survey tables ────────────────────────────────────────────────────
@@ -151,7 +245,7 @@ young_16_24 <- c("8_2")
 
 
 # Fixed text for the first two (static) columns of each Time Use table.
-# Edit values directly here — these display as read-only text in the app.
+# Edit values directly here - these display as read-only text in the app.
 time_use_row_text_1 <- data.frame(
   Col_1 = table_1_col_1,   
   Col_2 = table_1_col_2,   
@@ -181,10 +275,10 @@ coverage_counts <- dat_all_country_avgs %>%
 
 rm(dat_all_country_avgs)
 
-# Measures from time-use surveys — gaps are less concerning for these
+# Measures from time-use surveys - gaps are less concerning for these
 time_use_no_concern <- c("4_1", "4_2", "4_3", "8_2")
 
-# OECD average series — loaded when available; NULL otherwise
+# OECD average series - loaded when available; NULL otherwise
 oecd_avg_file <- "data/oecd average.RDS"
 oecd_avg <- if (file.exists(oecd_avg_file)) readRDS(oecd_avg_file) else NULL
 
@@ -238,12 +332,38 @@ oecd_comments <- if (file.exists(oecd_comments_file)) {
 }
 
 # ── Last time use survey previously submitted, per country ───────────────────
-# Excel file with columns: ref_area (ISO3), survey_name, survey_year
-# Shown read-only on the Time Use tab so countries can confirm whether the
-# survey we already hold is still their latest.
-last_tu_survey_file <- "data/last_time_use_survey.xlsx"
+# Long-format RDS with columns: name, value, ref_area, year_used.
+#   name == "Survey name"        → the survey's title
+#   name == "Latest survey year" → when the survey took place (free text, e.g.
+#                                  "2020-21", so kept as a string)
+#   year_used                    → the data request round in which the country
+#                                  submitted it
+# Reshaped to one row per country (most recent round if a country appears in
+# more than one) and shown read-only on the Time Use tab, so countries can
+# confirm whether the survey we already hold is still their latest.
+last_tu_survey_file <- "data/time use submissions.RDS"
+
 last_tu_survey <- if (file.exists(last_tu_survey_file)) {
-  .tu_raw <- readxl::read_excel(last_tu_survey_file)
+  .tu_raw <- readRDS(last_tu_survey_file) %>%
+    filter(name %in% c("Survey name", "Latest survey year")) %>%
+    mutate(
+      field = if_else(name == "Survey name", "survey_name", "survey_year"),
+      value = trimws(as.character(value))
+    ) %>%
+    distinct(ref_area, year_used, field, .keep_all = TRUE) %>%
+    select(ref_area, year_used, field, value) %>%
+    tidyr::pivot_wider(names_from = field, values_from = value) %>%
+    mutate(
+      .year_used_num = suppressWarnings(as.numeric(year_used)),
+      survey_name    = na_if(survey_name, ""),
+      survey_year    = na_if(survey_year, "")
+    ) %>%
+    group_by(ref_area) %>%
+    slice_max(.year_used_num, n = 1, with_ties = FALSE) %>%
+    ungroup() %>%
+    select(-.year_used_num) %>%
+    # A country with no usable survey name has nothing to show
+    filter(!is.na(survey_name), !survey_name %in% c("N.A.", "NA", "n.a."))
   res <- split(.tu_raw, .tu_raw$ref_area)
   rm(.tu_raw)
   res

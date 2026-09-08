@@ -8,7 +8,8 @@ shared_head <- tagList(
   tags$link(rel = "stylesheet", type = "text/css", href = "stylesheet.css"),
   tags$script(src = "https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"),
   tags$script(HTML(paste0(
-    "window.__validRanges = ", jsonlite::toJSON(validation_ranges, auto_unbox = TRUE), ";"
+    "window.__validRanges = ", jsonlite::toJSON(validation_ranges, auto_unbox = TRUE), ";\n",
+    "window.__rowValidRanges = ", jsonlite::toJSON(row_validation_overrides, auto_unbox = TRUE), ";"
   ))),
   tags$script(HTML("
     window.__chartOpts = window.__chartOpts || {};
@@ -29,40 +30,59 @@ shared_head <- tagList(
       }
     }
 
-    function submitMeasure(safe_id, measure) {      var container = document.getElementById('inputs_' + safe_id);
+    // Validate .year-input values in a panel against measure/row ranges.
+    // Most rows share the measure's default range, but a few rows (e.g. the
+    // Deprivation row within all_rows_dep_vert measures) use a different
+    // range regardless of measure - those take priority when present. Sets
+    // red borders and an error status message on failure. Returns true if
+    // all values are valid (or no range applies to this measure/row), false
+    // otherwise. Shared by submitMeasure() and saveAndContinue() so both
+    // enforce the same limits.
+    function validateMeasureRanges(container, measure, safe_id) {
       var inputs = container.querySelectorAll('.year-input');
-
-      // Validate against ranges if defined
       var range = window.__validRanges && window.__validRanges[measure];
-      if (range) {
-        var bad = [];
-        inputs.forEach(function(inp) {
-          if (inp.value === '') return;
-          var v = parseFloat(inp.value);
-          if (isNaN(v)) return;
-          if (v < range.min || v > range.max) {
-            bad.push(inp.dataset.year + ' (' + inp.dataset.row + '): ' + v);
-            inp.style.border = '2px solid #E63312';
-          } else {
-            inp.style.border = '1px solid #ccc';
-          }
-        });
-        if (bad.length > 0) {
-          var statusEl = document.getElementById('status_' + safe_id);
-          if (statusEl) {
-            statusEl.style.color = '#E63312';
-            statusEl.innerText = 'Values out of range (' + range.min + ' to ' + range.max + '): ' + bad.length + ' field(s). Please correct before submitting.';
-          }
-          return;
+      var rowRanges = window.__rowValidRanges || {};
+      if (!range && Object.keys(rowRanges).length === 0) return true;
+
+      var bad = [];
+      inputs.forEach(function(inp) {
+        if (inp.value === '') return;
+        var v = parseFloat(inp.value);
+        if (isNaN(v)) return;
+        var rowKey = inp.dataset.row || 'country_avg';
+        var r = rowRanges[rowKey] || range;
+        if (!r) { inp.style.border = '1px solid #ccc'; return; }
+        if (v < r.min || v > r.max) {
+          bad.push(inp.dataset.year + ' (' + inp.dataset.row + '): ' + v + ' [expected ' + r.min + '-' + r.max + ']');
+          inp.style.border = '2px solid #E63312';
+        } else {
+          inp.style.border = '1px solid #ccc';
         }
+      });
+      if (bad.length > 0) {
+        var statusEl = document.getElementById('status_' + safe_id);
+        if (statusEl) {
+          statusEl.style.color = '#E63312';
+          statusEl.innerText = 'Values out of range: ' + bad.length + ' field(s) - ' + bad.join('; ') + '. Please correct before submitting.';
+        }
+        return false;
       }
+      return true;
+    }
+
+    function submitMeasure(safe_id, measure) {      var container = document.getElementById('inputs_' + safe_id);
+      if (!validateMeasureRanges(container, measure, safe_id)) return;
+      var inputs = container.querySelectorAll('.year-input');
 
       var values = {};
       inputs.forEach(function(inp) {
         var row = inp.dataset.row || 'country_avg';
         var yr  = inp.dataset.year;
         if (!values[row]) values[row] = {};
-        values[row][yr] = inp.value === '' ? null : parseFloat(inp.value);
+        // Send an explicit empty string (not null) for a blank cell so the
+        // server can tell explicitly-cleared apart from never-touched;
+        // otherwise a cleared field falls back to the published value.
+        values[row][yr] = inp.value === '' ? '' : parseFloat(inp.value);
         inp.style.border = '1px solid #ccc';
       });
       // Collect data flags (B, E, P, etc.)
@@ -111,8 +131,10 @@ shared_head <- tagList(
       markBusy(false);
     });
 
-    // Collect the current state of a measure panel without validating. Used by
-    // the autosave listener so typing alone persists work-in-progress values.
+    // Collect the current state of a measure panel without client-side range
+    // validation. Used by the Save and continue button so work-in-progress
+    // values can be stored (and the heatmap refreshed) without the stricter
+    // checks submitMeasure() applies.
     function collectMeasure(safe_id, measure) {
       var container = document.getElementById('inputs_' + safe_id);
       if (!container) return null;
@@ -121,7 +143,10 @@ shared_head <- tagList(
         var row = inp.dataset.row || 'country_avg';
         var yr  = inp.dataset.year;
         if (!values[row]) values[row] = {};
-        values[row][yr] = inp.value === '' ? null : parseFloat(inp.value);
+        // Send an explicit empty string (not null) for a blank cell so the
+        // server can tell explicitly-cleared apart from never-touched;
+        // otherwise a cleared field falls back to the published value.
+        values[row][yr] = inp.value === '' ? '' : parseFloat(inp.value);
       });
       var flags = {};
       container.querySelectorAll('.flag-select').forEach(function(sel) {
@@ -142,32 +167,26 @@ shared_head <- tagList(
                timestamp: new Date().toISOString() };
     }
 
-    // Debounced autosave: fires ~800ms after the user stops typing in any
-    // measure panel input, so values persist without pressing Submit.
-    var __autosaveTimers = {};
-    function scheduleAutosave(container) {
-      var safe_id = container.dataset.safeid;
-      var measure = container.dataset.measure;
-      if (!safe_id || !measure) return;
-      clearTimeout(__autosaveTimers[safe_id]);
-      __autosaveTimers[safe_id] = setTimeout(function() {
-        var payload = collectMeasure(safe_id, measure);
-        if (!payload) return;
-        Shiny.setInputValue('autosaved_data', payload, {priority: 'event'});
-        var el = document.getElementById('status_' + safe_id);
-        if (el) { el.style.color = '#888'; el.innerText = 'Saving\u2026'; }
-      }, 800);
+    // Save and continue: user-triggered draft save. Conserves the panel's
+    // current values and refreshes the heatmap exactly like Submit, but
+    // does not mark the indicator complete. Replaces the old auto-save.
+    // Enforces the same range validation as Submit - an out-of-range value
+    // should never be silently drafted.
+    function saveAndContinue(safe_id, measure) {
+      var container = document.getElementById('inputs_' + safe_id);
+      if (!container) return;
+      if (!validateMeasureRanges(container, measure, safe_id)) return;
+      var payload = collectMeasure(safe_id, measure);
+      if (!payload) return;
+      Shiny.setInputValue('saved_draft_data', payload, {priority: 'event'});
+      var el = document.getElementById('status_' + safe_id);
+      if (el) { el.style.color = '#888'; el.innerText = 'Saving\u2026'; }
     }
-
-    document.addEventListener('input', function(e) {
-      var container = e.target.closest ? e.target.closest('[id^=\"inputs_\"]') : null;
-      if (container) scheduleAutosave(container);
-    });
-    document.addEventListener('change', function(e) {
-      var container = e.target.closest ? e.target.closest('[id^=\"inputs_\"]') : null;
-      if (container) scheduleAutosave(container);
-    });
-
+  ")),
+  # Split into a second <script> tag: a single R string literal containing
+  # \\uXXXX escapes is capped at 10000 characters, and the block above is
+  # already close to that limit.
+  tags$script(HTML("
     function submitTable(table_id) {
       var container = document.getElementById(table_id);
       var rows = container.querySelectorAll('tr[data-row]');
@@ -293,7 +312,7 @@ shared_head <- tagList(
         // User might paste all columns (incl. text) or just numeric columns
         var numValues;
         if (cells.length >= __pasteTotalCols) {
-          // Pasted full row including text columns — take only numeric part
+          // Pasted full row including text columns - take only numeric part
           numValues = cells.slice(__pasteTextCols, __pasteTotalCols);
         } else {
           // Assume only numeric columns were pasted
@@ -421,7 +440,7 @@ shared_head <- tagList(
       function setGroupSum(gr, col, val) {
         var cell = document.querySelector('.group-sum-cell[data-group-row=\"' + gr + '\"][data-col=\"' + col + '\"]');
         if (!cell) return;
-        cell.textContent = isNaN(val) ? '\\u2014' : parseFloat(val.toFixed(2)).toString();
+        cell.textContent = isNaN(val) ? '-' : parseFloat(val.toFixed(2)).toString();
       }
 
       function sumOf(rows, col) {
@@ -554,7 +573,7 @@ coverage_legend <- tags$div(
 .oecd_choices <- setNames(oecd_countries, oecd_names)
 .partner_choices <- setNames(partner_countries, partner_names)
 login_country_choices <- list(
-  "\u2014 Select your country \u2014" = "",
+  "Select your country" = "",
   "OECD countries" = as.list(.oecd_choices[order(names(.oecd_choices))]),
   "Partner countries" = as.list(.partner_choices[order(names(.partner_choices))])
 )
@@ -734,7 +753,10 @@ ui <- tagList(
                     tags$li("Each indicator below is shown as a row in the heatmap. Click any indicator row to expand its panel, enter values, and press",
                             tags$b("\u2713 Submit"), "to save. See the legend below for what each cell colour means."),
                     tags$li("Data and responses are pre-filled with previous submissions but can be overwritten."),
-                    tags$li("Your progress is", tags$b("auto-saved"), "as you type and will be restored when you log back in."),
+                    tags$li("Please enter the figures themselves in the portal. A link to a national database or publication is very welcome as a source, and the",
+                            tags$b("Other useful information"), "box is the perfect place for it, but we are only able to take up values that are actually submitted here. A link on its own, unfortunately, cannot be processed. If you have a lot of values to enter, the Excel template below is the quickest way to do it."),
+                    tags$li("Use", tags$b("Save and continue"), "to store your progress and update the heatmap without marking the indicator complete; your draft will be restored when you log back in. Press",
+                            tags$b("\u2713 Submit"), "when you are ready to mark the indicator complete."),
                     tags$li("Indicators marked", tags$span(style = "font-size:9px;background:#F89C1C;color:white;border-radius:3px;padding:1px 4px;", "\u26A0 Awaiting data input"),
                             "still need your input; those marked",
                             tags$span(style = "font-size:9px;background:#009EDB;color:white;border-radius:3px;padding:1px 4px;", "\u231B Awaiting Time Use submission"),
@@ -760,7 +782,7 @@ ui <- tagList(
                 tags$div(
                   style = paste0(
                     "background:#fafbfc;border:1px solid #e8eaee;border-radius:8px;",
-                    "margin:0 auto 20px;max-width:680px;text-align:center;"
+                    "margin:0 auto 20px;max-width:860px;text-align:center;"
                   ),
                   # Clickable header (always visible)
                   tags$div(
@@ -812,9 +834,16 @@ ui <- tagList(
                                   buttonLabel = tagList(icon("upload"), "Upload completed template"),
                                   placeholder = "No file selected",
                                   width = "auto")
-                      ),
-                      tags$span(id = "upload_wb_status",
-                                style = "font-size:11px;font-weight:600;")
+                      )
+                    ),
+                    # Upload feedback sits on its own line beneath the buttons
+                    tags$div(
+                      id = "upload_wb_status",
+                      style = paste0(
+                        "display:none;margin:12px auto 0;max-width:780px;text-align:left;",
+                        "font-size:11px;font-weight:600;line-height:1.5;word-break:break-word;",
+                        "padding:8px 12px;border-radius:6px;background:#f2f7f4;border:1px solid #d7e5dd;"
+                      )
                     )
                   )
                 )
@@ -876,7 +905,7 @@ ui <- tagList(
                     tags$li("Click", tags$b("\u2713 Submit table"), "to save each table separately.",
                             "Your progress is", tags$b("auto-saved"), "and restored on your next login."),
                     tags$li("Metadata such as survey names or question wording should be provided in English where possible. If no official English translation exists, please give the official name in the original language."),
-                    tags$li("Values can be revised at any time before the submission deadline, including after you have pressed Submit \u2014 just remember to press",
+                    tags$li("Values can be revised at any time before the submission deadline, including after you have pressed Submit; just remember to press",
                             tags$b("\u2713 Submit table"), "again to save the revision."),
                     tags$li("Data can be entered manually or uploaded using the Paste from spreadsheet feature.")
 
@@ -889,30 +918,46 @@ ui <- tagList(
               column(1),
               column(10,
                 uiOutput("tu_last_survey_box"),
+                # ── Survey details: name, year and free-text notes ───────────
+                # Everything here is auto-saved as it is typed; the button is
+                # a visible confirmation, not a requirement.
                 tags$div(
-                  style = "margin-bottom:18px;display:flex;align-items:center;gap:10px;",
-                  tags$button(
-                    id = "tu_no_update_btn",
-                    onclick = "declareTUNoUpdate()",
-                    class = "no-update-btn",
-                    style = "background:#f5f5f5;color:#555;border:1px solid #ccc;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:12px;",
-                    "No time use data update to declare"
+                  style = paste0(
+                    "background:#fafbfc;border:1px solid #e8eaee;border-radius:8px;",
+                    "padding:16px 18px;margin-bottom:18px;"
                   ),
-                  tags$span(id = "tu_no_update_status",
-                            style = "font-size:11px;color:#1F7A4D;font-weight:600;")
-                ),
-                fluidRow(
-                  column(5,
-                    tags$label("Survey name",
-                               style = "font-size:13px;font-weight:600;display:block;margin-bottom:4px;"),
-                    textInput("tu_survey_name", label = NULL,
-                              placeholder = "e.g. Time Use Survey 2024", width = "100%")
+                  tags$p(style = "font-weight:700;margin:0 0 12px;font-size:12px;color:#003189;",
+                         "Your latest time use survey"),
+                  fluidRow(
+                    column(6,
+                      tags$label("Survey name",
+                                 style = "font-size:13px;font-weight:600;display:block;margin-bottom:4px;"),
+                      textInput("tu_survey_name", label = NULL,
+                                placeholder = "e.g. Time Use Survey 2024", width = "100%")
+                    ),
+                    column(3,
+                      tags$label("Latest survey year",
+                                 style = "font-size:13px;font-weight:600;display:block;margin-bottom:4px;"),
+                      numericInput("tu_survey_year", label = NULL,
+                                   value = NA, min = 1990, max = 2035, width = "100%")
+                    )
                   ),
-                  column(3,
-                    tags$label("Latest survey year",
-                               style = "font-size:13px;font-weight:600;display:block;margin-bottom:4px;"),
-                    numericInput("tu_survey_year", label = NULL,
-                                 value = NA, min = 1990, max = 2035, width = "100%")
+                  tags$label("Additional information or notes on your time use survey",
+                             style = "font-size:13px;font-weight:600;display:block;margin-bottom:2px;"),
+                  tags$p(style = "font-size:11px;color:#888;margin:0 0 6px;line-height:1.5;",
+                         "Optional. Anything that helps us interpret your figures, for example ",
+                         "changes in methodology since the last survey, population coverage, sample ",
+                         "size, how your national activity categories map onto the OECD ones, or why ",
+                         "particular rows are left blank."),
+                  textAreaInput("tu_notes", label = NULL, value = "", width = "100%",
+                                rows = 4,
+                                placeholder = "Notes on methodology, coverage, definitions\u2026"),
+                  tags$div(
+                    style = "display:flex;align-items:center;gap:8px;margin-top:-6px;",
+                    tags$span(style = "font-size:11px;color:#8a9bae;",
+                              "Saved automatically as you type and restored next time you log in."),
+                    tags$span(style = "font-size:11px;color:#1F7A4D;font-weight:600;",
+                              textOutput("tu_meta_status", inline = TRUE))
                   )
                 ),
                 br(),
@@ -949,7 +994,7 @@ ui <- tagList(
                 br(), br(),
                 tags$div(
                   style = "display:flex;align-items:center;gap:12px;margin-bottom:8px;",
-                  h4(style = "margin:0;", "Table 2. Considering the activity coding list in the national time-use survey, please indicate which activity codes are grouped under each activity (e.g. 1.1. paid work)."),
+                  h4(style = "margin:0;", "Table 2. Considering the activity coding list in the national time-use survey, please indicate which \nactivity codes are grouped under each activity (e.g. 1.1. paid work)."),
                   tags$button(
                     onclick = "openPasteModal('tu_table2', 2, 3)",
                     style = "background:#f5f5f5;color:#555;border:1px solid #ccc;padding:5px 12px;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;",
@@ -1024,6 +1069,9 @@ ui <- tagList(
           )
         )
       ),
+      # ── Post-submission bar: record copy stays available ────────────
+      uiOutput("finalized_bar"),
+
       # ── Final submit confirmation overlay ──────────────────────────
       tags$div(
         id = "final_submit_confirm",
@@ -1042,6 +1090,19 @@ ui <- tagList(
           tags$p(id = "final_submit_msg",
                  style = "font-size:13px;color:#55606B;line-height:1.6;margin:0 0 20px;",
                  "All your data and responses have been submitted successfully. Thank you for your contribution."),
+          tags$div(
+            style = "margin-bottom:18px;",
+            downloadButton("dl_submission_copy", "Download a copy for your records",
+              icon = icon("download"),
+              style = paste0(
+                "background:#1F7A4D;color:white;border:none;padding:9px 22px;border-radius:5px;",
+                "font-size:13px;font-weight:600;"
+              )),
+            tags$p(style = "font-size:11px;color:#8a9bae;margin:8px 0 0;line-height:1.5;",
+                   "An Excel workbook containing every value, flag, note and questionnaire ",
+                   "response you submitted. You can download it again at any time from the ",
+                   "bar at the bottom of the page.")
+          ),
           tags$button(
             onclick = "document.getElementById('final_submit_confirm').style.display='none';",
             style = paste0(
@@ -1097,7 +1158,7 @@ ui <- tagList(
           "align-items:center;justify-content:space-between;margin-bottom:20px;"
         ),
         tags$span(style = "color:white;font-weight:700;font-size:16px;",
-                  "OECD Well-being Portal \u2014 Admin"),
+                  "OECD Well-being Portal: Admin"),
         actionLink("admin_logout_btn", "\u2190 Log out",
                    style = "color:rgba(255,255,255,0.85);font-size:13px;font-weight:600;")
       ),
@@ -1186,18 +1247,19 @@ server <- function(input, output, session) {
 
   # ── Authentication ──────────────────────────────────────────────────────────
   credentials <- reactiveValues(authenticated = FALSE, country = NULL, country_name = NULL)
-  # Snapshot of entries as of the last explicit Submit / template upload. The
-  # heatmap and input panels depend on this rather than on session_data$entries,
-  # so autosaved keystrokes persist to disk without rebuilding the whole UI.
+  # Snapshot of entries as of the last explicit Submit, "Save and continue",
+  # or template upload - all three refresh this immediately so the heatmap
+  # and input panels (which depend on this rather than on
+  # session_data$entries directly) stay in sync with the latest values.
   committed_entries   <- reactiveVal(list())
   committed_revisions <- reactiveVal(list())
   # Plain environment (deliberately non-reactive) caching the per-measure
   # echarts HTML, which is expensive to build and depends only on the data.
   chart_cache <- new.env(parent = emptyenv())
   chart_cache$key <- NULL
-  # Bumped only by explicit user actions (Submit, no-update toggle, template
-  # upload, backup restore). The panel/heatmap builder depends on this, so
-  # autosaved keystrokes can never trigger a rebuild.
+  # Bumped by explicit user actions that should refresh the heatmap/panels:
+  # Submit, "Save and continue", no-update toggle, template upload, backup
+  # restore. Nothing else invalidates this expensive rebuild.
   ui_refresh <- reactiveVal(0)
   bump_ui <- function() ui_refresh(isolate(ui_refresh()) + 1)
   dat_rv      <- reactiveVal(NULL)
@@ -1255,7 +1317,10 @@ server <- function(input, output, session) {
       )
       return()
     }
-    # Successful login
+    # Successful login: wipe any state left over from a previous country
+    # before this country's own session is loaded.
+    reset_country_state()
+
     iso   <- input$login_country
     cname <-  country_name_vector[country_name_vector == iso] %>% names()
     credentials$authenticated <- TRUE
@@ -1276,6 +1341,22 @@ server <- function(input, output, session) {
         session_data$no_updates <- loaded$no_updates %||% list()
         session_data$flags      <- loaded$flags      %||% list()
         session_data$revisions  <- loaded$revisions  %||% list()
+        # explicit_submit tracks which measures were actually confirmed via
+        # the Submit button (as opposed to merely uploaded or draft-saved).
+        # For sessions saved before this field existed, fall back to treating
+        # any measure with a filled entry as previously submitted so past
+        # work isn't demoted to "incomplete".
+        if (!is.null(loaded$explicit_submit)) {
+          session_data$explicit_submit <- loaded$explicit_submit
+        } else {
+          is_filled_legacy <- function(v) !is.null(v) && !is.na(v) && v != ""
+          legacy_measures <- names(session_data$entries)[vapply(session_data$entries, function(m) {
+            is.list(m) && any(vapply(m, function(row) {
+              is.list(row) && any(vapply(row, is_filled_legacy, logical(1)))
+            }, logical(1)))
+          }, logical(1))]
+          session_data$explicit_submit <- setNames(as.list(rep(TRUE, length(legacy_measures))), legacy_measures)
+        }
         # Seed the committed snapshot so restored work renders on the heatmap.
         committed_entries(session_data$entries)
         committed_revisions(session_data$revisions)
@@ -1283,10 +1364,22 @@ server <- function(input, output, session) {
         session_data$time_use_1   <- loaded$time_use_1
         session_data$time_use_2   <- loaded$time_use_2
         session_data$tu_no_update <- loaded$tu_no_update %||% FALSE
-        if (!is.null(loaded$tu_survey_name))
-          updateTextInput(session,   "tu_survey_name", value = loaded$tu_survey_name)
-        if (!is.null(loaded$tu_survey_year))
-          updateNumericInput(session, "tu_survey_year", value = loaded$tu_survey_year)
+        # Restoring this keeps the record-copy bar (and hides the submit bar)
+        # for a country that has already finalised.
+        session_data$finalized    <- loaded$finalized
+        # Survey metadata: prefer the tu_meta list, falling back to the older
+        # top-level fields for sessions saved before tu_meta existed.
+        meta <- loaded$tu_meta
+        if (is.null(meta) || length(meta) == 0) {
+          meta <- list(survey_name = loaded$tu_survey_name %||% "",
+                       survey_year = loaded$tu_survey_year,
+                       notes       = loaded$tu_notes %||% "")
+        }
+        session_data$tu_meta <- meta
+        updateTextInput(session, "tu_survey_name", value = meta$survey_name %||% "")
+        if (!is.null(meta$survey_year))
+          updateNumericInput(session, "tu_survey_year", value = meta$survey_year)
+        updateTextAreaInput(session, "tu_notes", value = meta$notes %||% "")
         if (!is.null(loaded$tu1_explanation) && nzchar(loaded$tu1_explanation))
           updateTextAreaInput(session, "tu1_explanation", value = loaded$tu1_explanation)
       }
@@ -1295,15 +1388,8 @@ server <- function(input, output, session) {
     shinyjs::hide("login_screen")
     shinyjs::show("main_app")
 
-    # Restore time-use no-update button state
-    if (isTRUE(session_data$tu_no_update)) {
-      runjs("setTimeout(function() {
-        var btn = document.getElementById('tu_no_update_btn');
-        if(btn) btn.classList.add('active');
-        var el = document.getElementById('tu_no_update_status');
-        if(el) { el.style.color = '#1F7A4D'; el.innerText = '\\u2713 Marked as no update'; }
-      }, 300);")
-    }
+    # tu_no_update button state is now restored via the renderUI in
+    # tu_last_survey_box, so no manual JS restore needed here.
   })
 
   # ── Logout ────────────────────────────────────────────────────────────────────
@@ -1313,18 +1399,8 @@ server <- function(input, output, session) {
     credentials$country_name  <- NULL
     dat_rv(NULL)
 
-    # Reset session data
-    session_data$entries      <- list()
-    session_data$revisions    <- list()
-    committed_entries(list())
-    committed_revisions(list())
-    session_data$notes        <- list()
-    session_data$responses    <- list()
-    session_data$flags        <- list()
-    session_data$time_use_1   <- NULL
-    session_data$time_use_2   <- NULL
-    session_data$tu_no_update <- FALSE
-    session_data$finalized    <- NULL
+    # Wipe the whole country instance (data, drafts, uploads, client-side text)
+    reset_country_state()
 
     # Reset login form
     updateSelectInput(session, "login_country", selected = "")
@@ -1339,7 +1415,7 @@ server <- function(input, output, session) {
   observeEvent(input$change_pw_modal_btn, {
     req(credentials$authenticated)
     showModal(modalDialog(
-      title = paste0("Change password \u2014 ", credentials$country_name),
+      title = paste0("Change password: ", credentials$country_name),
       size = "s",
       easyClose = TRUE,
       tags$div(
@@ -1410,15 +1486,79 @@ server <- function(input, output, session) {
     flags        = list(),
     # revisions[[measure]][[breakdown_key]][[year]] = list of
     # list(from, to, at) records, appended each time a non-empty value is
-    # overwritten with a different non-empty value during a session.
+    # overwritten with a different (or blank) value during a session.
     revisions    = list(),
+    # explicit_submit[[measure]] = TRUE once the user has pressed "Submit
+    # data" for that measure this session (or a prior session). Uploading a
+    # template or using "Save and continue" populates entries/revisions but
+    # deliberately does NOT set this, so the indicator is not marked
+    # complete until the user reviews and submits it.
+    explicit_submit = list(),
     time_use_1   = NULL,
     time_use_2   = NULL,
     tu_no_update   = FALSE,
     tu_no_update_1 = FALSE,
     tu_no_update_2 = FALSE,
+    # Time use survey metadata: name, year and free-text notes. Held in
+    # session_data (rather than read off the inputs only at save time) so that
+    # editing it triggers the auto-save like any other piece of data.
+    tu_meta        = list(),
     finalized      = NULL
   )
+
+  # ── Wipe every trace of the current country's instance ──────────────────────
+  # Called on logout AND immediately before a new country's session is loaded,
+  # so nothing uploaded, downloaded or typed under one country can ever leak
+  # into another country's view within the same browser session.
+  reset_country_state <- function() {
+    session_data$entries         <- list()
+    session_data$notes           <- list()
+    session_data$responses       <- list()
+    session_data$no_updates      <- list()
+    session_data$flags           <- list()
+    session_data$revisions       <- list()
+    session_data$explicit_submit <- list()
+    session_data$time_use_1      <- NULL
+    session_data$time_use_2      <- NULL
+    session_data$tu_no_update    <- FALSE
+    session_data$tu_no_update_1  <- FALSE
+    session_data$tu_no_update_2  <- FALSE
+    session_data$tu_meta         <- list()
+    session_data$finalized       <- NULL
+
+    committed_entries(list())
+    committed_revisions(list())
+
+    # Charts are country-specific; force a rebuild on next render.
+    chart_cache$key <- NULL
+    chart_cache$sub <- NULL
+    chart_cache$cov <- NULL
+
+    # Free-text Time Use inputs
+    updateTextInput(session,     "tu_survey_name",  value = "")
+    updateNumericInput(session,  "tu_survey_year",  value = NA)
+    updateTextAreaInput(session, "tu_notes",        value = "")
+    updateTextAreaInput(session, "tu1_explanation", value = "")
+    tu_meta_saved_at(NULL)
+    tu_meta_synced(FALSE)
+
+    # Clear the uploaded-file widget and any client-side status text left
+    # behind by the previous country (upload/submit/note confirmations).
+    shinyjs::reset("upload_wb_file")
+    runjs(paste0(
+      "(function(){",
+      "var u=document.getElementById('upload_wb_status');",
+      "if(u){u.innerText='';u.style.display='none';}",
+      "document.querySelectorAll(\"[id^='status_'],[id^='note_status_'],",
+      "[id^='tu_no_update_status'],[id^='table_status_']\")",
+      ".forEach(function(el){el.innerText='';});",
+      "document.querySelectorAll('.collapsible-panel')",
+      ".forEach(function(el){el.style.display='none';});",
+      "})();"
+    ))
+
+    bump_ui()
+  }
 
   # Auto-save to sessions/{iso}.rds whenever any data changes
   observe({
@@ -1427,7 +1567,7 @@ server <- function(input, output, session) {
     list(session_data$entries, session_data$notes, session_data$responses,
          session_data$no_updates, session_data$flags, session_data$revisions,
          session_data$time_use_1, session_data$time_use_2,
-         session_data$tu_no_update)
+         session_data$tu_no_update, session_data$tu_meta)
     dir.create("sessions", showWarnings = FALSE)
     saveRDS(
       c(reactiveValuesToList(session_data),
@@ -1453,8 +1593,6 @@ server <- function(input, output, session) {
       iso <- credentials$country
       is_eu_silc <- iso %in% eu_silc_countries
       measures <- if (is_eu_silc) setdiff(xlsx_measures, eu_silc_measures) else xlsx_measures
-      # Exclude time-use measures (entered in Time Use tab)
-      measures <- setdiff(measures, time_use_measures)
 
       d <- dat_rv()
       if (is.null(d)) d <- data.frame(measure = character(), sex = character(),
@@ -1462,65 +1600,9 @@ server <- function(input, output, session) {
                                        time_period = numeric(), obs_value = numeric())
       years <- 2004:2026
 
-      # Row definitions are needed — replicate the logic from row_defs
-      age_labels_fn <- function(m) {
-        if (m %in% young_15_24) {
-          list(young = "Young (15-24 years)", middle_aged = "Middle-aged (25-64 years)", old = "Old (65+ years)")
-        } else if (m %in% young_16_24) {
-          list(young = "Young (16-24 years)", middle_aged = "Middle-aged (25-54 years)", old = "Old (55+ years)")
-        } else {
-          list(young = "Young (16-29 years)", middle_aged = "Middle-aged (30-49 years)", old = "Old (50+ years)")
-        }
-      }
-      row_defs_fn <- function(m) {
-        al <- age_labels_fn(m)
-        if (m %in% no_country_average) {
-          list(
-            list(key = "male",        label = "Male"),
-            list(key = "female",      label = "Female"),
-            list(key = "young",       label = al$young),
-            list(key = "middle_aged", label = al$middle_aged),
-            list(key = "old",         label = al$old),
-            list(key = "primary",     label = "Primary (ISCED levels 0-2)"),
-            list(key = "secondary",   label = "Secondary (ISCED levels 3-4)"),
-            list(key = "tertiary",    label = "Tertiary (ISCED levels 5-8)")
-          )
-        } else if (m %in% all_rows) {
-          list(
-            list(key = "country_avg", label = "Country average"),
-            list(key = "male",        label = "Male"),
-            list(key = "female",      label = "Female"),
-            list(key = "young",       label = al$young),
-            list(key = "middle_aged", label = al$middle_aged),
-            list(key = "old",         label = al$old),
-            list(key = "primary",     label = "Primary (ISCED levels 0-2)"),
-            list(key = "secondary",   label = "Secondary (ISCED levels 3-4)"),
-            list(key = "tertiary",    label = "Tertiary (ISCED levels 5-8)")
-          )
-        } else if (exists("all_rows_dep_vert") && m %in% all_rows_dep_vert) {
-          list(
-            list(key = "country_avg", label = "Country average"),
-            list(key = "vert",        label = "Vertical inequality"),
-            list(key = "dep",         label = "Deprivation"),
-            list(key = "male",        label = "Male"),
-            list(key = "female",      label = "Female"),
-            list(key = "young",       label = al$young),
-            list(key = "middle_aged", label = al$middle_aged),
-            list(key = "old",         label = al$old),
-            list(key = "primary",     label = "Primary (ISCED levels 0-2)"),
-            list(key = "secondary",   label = "Secondary (ISCED levels 3-4)"),
-            list(key = "tertiary",    label = "Tertiary (ISCED levels 5-8)")
-          )
-        } else if (m %in% gender_only) {
-          list(
-            list(key = "country_avg", label = "Country average"),
-            list(key = "male",        label = "Male"),
-            list(key = "female",      label = "Female")
-          )
-        } else {
-          list(list(key = "country_avg", label = "Country average"))
-        }
-      }
+      # Row definitions come from global.R so the template, the record copy of
+      # a submission and the on-screen panels never drift apart.
+      row_defs_fn <- dl_row_defs
 
       # Full data for pre-filling all breakdowns
       d_full_dl <- d %>%
@@ -1534,17 +1616,7 @@ server <- function(input, output, session) {
         mutate(time_period = as.numeric(time_period))
 
       # Breakdown key -> filter conditions
-      bf_map <- list(
-        country_avg = list(sex = "_T", age = "_T", edu = "_T"),
-        male        = list(sex = "M",  age = "_T", edu = "_T"),
-        female      = list(sex = "F",  age = "_T", edu = "_T"),
-        young       = list(sex = "_T", age = "YOUNG", edu = "_T"),
-        middle_aged = list(sex = "_T", age = "MID",   edu = "_T"),
-        old         = list(sex = "_T", age = "OLD",   edu = "_T"),
-        primary     = list(sex = "_T", age = "_T", edu = "ISCED11_1"),
-        secondary   = list(sex = "_T", age = "_T", edu = "ISCED11_2_3"),
-        tertiary    = list(sex = "_T", age = "_T", edu = "ISCED11_5T8")
-      )
+      bf_map <- breakdown_filter_map
 
       sheets <- list()
       for (m in measures) {
@@ -1561,11 +1633,13 @@ server <- function(input, output, session) {
         # Add year columns with existing data pre-filled
         for (yr in years) {
           vals <- sapply(rows, function(r) {
-            # Check session data first
+            # Check session data first - "" is an explicit deletion marker
             saved <- session_data$entries[[m]]
             if (!is.null(saved) && !is.null(saved[[r$key]]) &&
                 !is.null(saved[[r$key]][[as.character(yr)]])) {
-              return(as.numeric(saved[[r$key]][[as.character(yr)]]))
+              sv <- saved[[r$key]][[as.character(yr)]]
+              if (identical(sv, "")) return(NA_real_)
+              return(as.numeric(sv))
             }
             # Fall back to published data, then non-used data
             if (r$key %in% c("vert", "dep")) {
@@ -1607,7 +1681,7 @@ server <- function(input, output, session) {
           paste0("Well-being data template for ", names(country_name_vector)[country_name_vector == iso]),
           "",
           "Each sheet corresponds to one indicator.",
-          "Column A (breakdown_key) identifies the breakdown — do NOT modify this column.",
+          "Column A (breakdown_key) identifies the breakdown; do NOT modify this column.",
           "Column B (breakdown_label) is a human-readable label for reference.",
           "Columns C onward are years (2004–2026).",
           "Enter numeric values in the year columns. Leave cells blank if no data.",
@@ -1630,6 +1704,175 @@ server <- function(input, output, session) {
   # panel is collapsed by default), which renders the link greyed-out/unclickable.
   outputOptions(output, "dl_wb_template", suspendWhenHidden = FALSE)
 
+  # ── Record copy of a country's submission ──────────────────────────────────
+  # Offered once the final submission is made so countries keep an archive of
+  # exactly what they sent us. This reads session_data only: it is a record of
+  # what was SUBMITTED, not of what is published in the OECD database.
+  build_submission_sheets <- function() {
+    iso     <- credentials$country
+    cname   <- names(country_name_vector)[country_name_vector == iso]
+    entries <- session_data$entries
+    flags   <- session_data$flags
+    notes   <- session_data$notes
+    resps   <- session_data$responses
+    no_upd  <- session_data$no_updates
+    fin     <- session_data$finalized
+    meta    <- session_data$tu_meta %||% list()
+
+    is_filled <- function(v) {
+      !is.null(v) && length(v) == 1 && !is.na(v) && !identical(as.character(v), "")
+    }
+    label_for <- function(m) {
+      lbl <- dict$label[dict$measure == m]
+      if (length(lbl) == 0 || is.na(lbl[1])) m else lbl[1]
+    }
+
+    # ── Submitted values, long format ──
+    data_rows <- list()
+    for (m in names(entries)) {
+      rows    <- dl_row_defs(m)
+      row_lbl <- setNames(vapply(rows, `[[`, character(1), "label"),
+                          vapply(rows, `[[`, character(1), "key"))
+      for (bk in names(entries[[m]])) {
+        vals <- entries[[m]][[bk]]
+        if (!is.list(vals)) next
+        for (yr in names(vals)) {
+          if (!is_filled(vals[[yr]])) next
+          fl <- tryCatch(flags[[m]][[bk]][[yr]], error = function(e) NULL)
+          data_rows[[length(data_rows) + 1]] <- data.frame(
+            measure       = m,
+            indicator     = label_for(m),
+            breakdown_key = bk,
+            breakdown     = if (bk %in% names(row_lbl)) unname(row_lbl[[bk]]) else bk,
+            year          = suppressWarnings(as.numeric(yr)),
+            value         = suppressWarnings(as.numeric(vals[[yr]])),
+            flag          = if (is_filled(fl)) as.character(fl) else "",
+            stringsAsFactors = FALSE
+          )
+        }
+      }
+    }
+    data_df <- if (length(data_rows) > 0) {
+      bind_rows(data_rows) %>% arrange(measure, breakdown_key, year)
+    } else {
+      data.frame(measure = character(), indicator = character(),
+                 breakdown_key = character(), breakdown = character(),
+                 year = numeric(), value = numeric(), flag = character(),
+                 stringsAsFactors = FALSE)
+    }
+
+    # ── "Other useful information" notes ──
+    kept_notes <- Filter(is_filled, notes)
+    notes_df <- if (length(kept_notes) > 0) {
+      data.frame(measure   = names(kept_notes),
+                 indicator = vapply(names(kept_notes), label_for, character(1)),
+                 note      = vapply(kept_notes, as.character, character(1)),
+                 stringsAsFactors = FALSE, row.names = NULL)
+    } else {
+      data.frame(measure = character(), indicator = character(), note = character(),
+                 stringsAsFactors = FALSE)
+    }
+
+    # ── Country question-format responses ──
+    fmt_indics <- vapply(xlsx_response_format, function(x) as.character(x$indic)[1], character(1))
+    resp_rows  <- list()
+    for (m in names(resps)) {
+      hit  <- which(fmt_indics == m)
+      labs <- if (length(hit) > 0) xlsx_response_format[[hit[1]]]$response$label else character(0)
+      for (idx in names(resps[[m]])) {
+        val <- resps[[m]][[idx]]
+        if (!is_filled(val)) next
+        i <- suppressWarnings(as.integer(idx))
+        resp_rows[[length(resp_rows) + 1]] <- data.frame(
+          measure   = m,
+          indicator = label_for(m),
+          question  = if (!is.na(i) && i <= length(labs)) labs[i] else paste0("Question ", idx),
+          response  = as.character(val),
+          stringsAsFactors = FALSE
+        )
+      }
+    }
+    resp_df <- if (length(resp_rows) > 0) bind_rows(resp_rows) else {
+      data.frame(measure = character(), indicator = character(),
+                 question = character(), response = character(),
+                 stringsAsFactors = FALSE)
+    }
+
+    # ── Time use tables: nested list -> data frame ──
+    tu_sheet <- function(saved, row_text, col_names) {
+      if (is.null(saved) || length(saved) == 0) return(NULL)
+      n_text <- ncol(row_text)
+      out    <- row_text
+      names(out) <- ifelse(nzchar(col_names[seq_len(n_text)]),
+                           col_names[seq_len(n_text)],
+                           paste0("Column ", seq_len(n_text)))
+      for (cc in seq(n_text + 1, length(col_names))) {
+        nm <- if (nzchar(col_names[cc])) gsub("\n", " ", col_names[cc]) else "Value"
+        out[[nm]] <- vapply(seq_len(nrow(row_text)), function(r) {
+          v <- tryCatch(saved[[as.character(r)]][[paste0("c", cc)]], error = function(e) NULL)
+          if (is.null(v)) "" else as.character(v)
+        }, character(1))
+      }
+      out
+    }
+    tu1 <- tu_sheet(session_data$time_use_1, time_use_row_text_1, time_use_col_names_1)
+    tu2 <- tu_sheet(session_data$time_use_2, time_use_row_text_2, time_use_col_names_2)
+
+    declared <- names(no_upd)[vapply(no_upd, isTRUE, logical(1))]
+
+    summary_df <- data.frame(
+      Item = c("Country", "ISO code", "Submission finalised",
+               "Indicators with values submitted", "Values submitted",
+               "Indicators declared 'no data update'",
+               "Time use survey name", "Latest survey year", "Time use notes",
+               "Time use table 1", "Time use table 2",
+               "Time use: no update declared", "File generated"),
+      Value = c(
+        cname, iso,
+        if (is.null(fin)) "Not yet finalised" else format(fin, "%Y-%m-%d %H:%M"),
+        as.character(length(unique(data_df$measure))),
+        as.character(nrow(data_df)),
+        if (length(declared) > 0) paste(declared, collapse = ", ") else "None",
+        if (is_filled(meta$survey_name)) as.character(meta$survey_name) else "Not provided",
+        if (is_filled(meta$survey_year)) as.character(meta$survey_year) else "Not provided",
+        if (is_filled(meta$notes))       as.character(meta$notes)       else "None",
+        if (is.null(session_data$time_use_1)) "Not submitted" else "Submitted",
+        if (is.null(session_data$time_use_2)) "Not submitted" else "Submitted",
+        if (isTRUE(session_data$tu_no_update)) "Yes" else "No",
+        format(Sys.time(), "%Y-%m-%d %H:%M")
+      ),
+      stringsAsFactors = FALSE
+    )
+
+    sheets <- list(
+      Summary       = summary_df,
+      `Data`        = data_df,
+      `Notes`       = notes_df,
+      `Questionnaire` = resp_df
+    )
+    if (!is.null(tu1)) sheets[["Time use table 1"]] <- tu1
+    if (!is.null(tu2)) sheets[["Time use table 2"]] <- tu2
+    sheets
+  }
+
+  submission_copy_filename <- function() {
+    iso <- credentials$country %||% "unknown"
+    paste0("wellbeing_submission_", iso, "_", Sys.Date(), ".xlsx")
+  }
+  write_submission_copy <- function(file) {
+    req(credentials$authenticated, credentials$country)
+    writexl::write_xlsx(build_submission_sheets(), file)
+  }
+
+  # Two buttons share one handler: one inside the confirmation overlay, one on
+  # the persistent bar shown after finalisation.
+  output$dl_submission_copy <- downloadHandler(
+    filename = submission_copy_filename, content = write_submission_copy)
+  output$dl_submission_copy_bar <- downloadHandler(
+    filename = submission_copy_filename, content = write_submission_copy)
+  outputOptions(output, "dl_submission_copy",     suspendWhenHidden = FALSE)
+  outputOptions(output, "dl_submission_copy_bar", suspendWhenHidden = FALSE)
+
   # ── Well-being Excel template upload ───────────────────────────────────────
   observeEvent(input$upload_wb_file, {
     req(credentials$authenticated)
@@ -1643,6 +1886,7 @@ server <- function(input, output, session) {
 
       n_measures <- 0
       n_values   <- 0
+      n_deleted  <- 0
       warnings   <- character()
 
       for (sn in data_sheets) {
@@ -1667,7 +1911,12 @@ server <- function(input, output, session) {
           next
         }
 
-        # Build entry structure: list(breakdown_key = list(year = value))
+        # Populate session_data$entries with uploaded values. Routed through
+        # store_measure() so a blank cell that clears a previously non-empty
+        # value is recorded as a revision, exactly as if the user had cleared
+        # the field manually. This does NOT count as a submission - the
+        # indicator is not marked complete until the user reviews and clicks
+        # Submit (explicit_submit is left untouched here).
         entry <- session_data$entries[[m]] %||% list()
         for (i in seq_len(nrow(df))) {
           bk <- df$breakdown_key[i]
@@ -1681,30 +1930,49 @@ server <- function(input, output, session) {
                 entry[[bk]][[yr]] <- num_val
                 n_values <- n_values + 1
               }
+            } else {
+              # Blank cell: store "" to override any published data fallback
+              # so the input field shows blank after upload.
+              entry[[bk]][[yr]] <- ""
+              if (!is.null(session_data$entries[[m]][[bk]][[yr]]) &&
+                  session_data$entries[[m]][[bk]][[yr]] != "") {
+                n_deleted <- n_deleted + 1
+              }
             }
           }
         }
-        session_data$entries[[m]] <- entry
+        store_measure(list(measure = m, values = entry), record_revisions = TRUE)
         n_measures <- n_measures + 1
       }
 
-      # A template upload is an explicit action, so commit it to the heatmap.
+      # Publish to the committed snapshot immediately so the heatmap and the
+      # input panels reflect the uploaded (and cleared) values right away.
+      # This is a preview, not a submission: explicit_submit is untouched, so
+      # the indicator still shows "Awaiting data input" until the user
+      # reviews it and presses Submit.
       committed_entries(session_data$entries)
+      committed_revisions(session_data$revisions)
       bump_ui()
 
-      msg <- paste0("\u2713 Uploaded data for ", n_measures, " indicator(s) (",
-                     n_values, " values populated).")
+      msg <- paste0("\u2713 Populated data for ", n_measures, " indicator(s) (",
+                     n_values, " values loaded",
+                     if (n_deleted > 0) paste0(", ", n_deleted, " removed") else "",
+                     "). Review each indicator and click Submit to confirm.")
       if (length(warnings) > 0) {
         msg <- paste0(msg, " Warnings: ", paste(warnings, collapse = " "))
       }
       runjs(paste0(
         "var el = document.getElementById('upload_wb_status');",
-        "if(el){ el.style.color='#1F7A4D'; el.innerText='", gsub("'", "\\\\'", msg), "'; }"
+        "if(el){ el.style.display='block'; el.style.color='#1F7A4D';",
+        "el.style.background='#f2f7f4'; el.style.borderColor='#d7e5dd';",
+        "el.innerText='", gsub("'", "\\\\'", msg), "'; }"
       ))
     }, error = function(e) {
       runjs(paste0(
         "var el = document.getElementById('upload_wb_status');",
-        "if(el){ el.style.color='#E63312'; el.innerText='Error reading file: ",
+        "if(el){ el.style.display='block'; el.style.color='#E63312';",
+        "el.style.background='#fdf1f0'; el.style.borderColor='#f3c9c4';",
+        "el.innerText='Error reading file: ",
         gsub("'", "\\\\'", conditionMessage(e)), "'; }"
       ))
     })
@@ -1714,7 +1982,8 @@ server <- function(input, output, session) {
   make_time_use_table <- function(n_rows, col_names, n_text_cols, table_id,
                                    row_text = NULL, saved = NULL,
                                    show_sums = FALSE, computed_codes = character(0),
-                                   table_num = 1, no_update_active = FALSE) {
+                                   table_num = 1, no_update_active = FALSE,
+                                   numeric_only = TRUE) {
     n_cols <- length(col_names)
     th <- paste(sapply(col_names, function(cn) {
       paste0("<th style='font-size:11px;padding:4px 8px;border:1px solid #ddd;background:#f5f5f5;white-space:pre-wrap;'>", cn, "</th>")
@@ -1735,7 +2004,7 @@ server <- function(input, output, session) {
           sum_tds <- paste(sapply((n_text_cols + 1):n_cols, function(c) {
             paste0("<td class='group-sum-cell' data-group-row='", r, "' data-col='", c, "' ",
                    "style='font-size:11px;font-weight:700;color:rgba(255,255,255,0.85);padding:6px 4px;",
-                   "border:1px solid #0f2843;background:#003189;text-align:center;min-width:60px;'>\u2014</td>")
+                   "border:1px solid #0f2843;background:#003189;text-align:center;min-width:60px;'>-</td>")
           }), collapse = "")
           paste0("<tr data-row='", r, "'>", label_td, sum_tds, "</tr>")
         } else {
@@ -1767,13 +2036,22 @@ server <- function(input, output, session) {
                      "border-radius:3px;padding:2px 4px;text-align:center;background:#dce4ef;color:#1F2B3A;cursor:default;'/>",
                      "</td>")
             } else {
-              paste0("<td style='padding:2px;'>",
-                     "<input type='text' inputmode='decimal' class='tu-num year-input' ",
-                     "data-row='", r, "' data-col='", c, "' value='", saved_val, "' ",
-                     "oninput=\"this.value=this.value.replace(/[^0-9.\\-]/g,'')\" ",
-                     "style='width:100%;min-width:60px;font-size:11px;border:1px solid #ccc;",
-                     "border-radius:3px;padding:2px 4px;text-align:center;'/>",
-                     "</td>")
+              if (numeric_only) {
+                paste0("<td style='padding:2px;'>",
+                       "<input type='text' inputmode='decimal' class='tu-num year-input' ",
+                       "data-row='", r, "' data-col='", c, "' value='", saved_val, "' ",
+                       "oninput=\"this.value=this.value.replace(/[^0-9.\\-]/g,'')\" ",
+                       "style='width:100%;min-width:60px;font-size:11px;border:1px solid #ccc;",
+                       "border-radius:3px;padding:2px 4px;text-align:center;'/>",
+                       "</td>")
+              } else {
+                paste0("<td style='padding:2px;'>",
+                       "<input type='text' class='tu-num year-input' ",
+                       "data-row='", r, "' data-col='", c, "' value='", htmltools::htmlEscape(saved_val), "' ",
+                       "style='width:100%;min-width:60px;font-size:11px;border:1px solid #ccc;",
+                       "border-radius:3px;padding:2px 4px;text-align:center;'/>",
+                       "</td>")
+              }
             }
           }
         }), collapse = "")
@@ -1805,10 +2083,25 @@ server <- function(input, output, session) {
                 "No previous time use survey on record.")
     } else {
       nm <- as.character(rec$survey_name[1])
-      yr <- rec$survey_year[1]
-      tags$span(style = "font-size:13px;font-weight:600;color:#1F2B3A;",
-                paste0(nm, if (!is.na(yr)) paste0(" (", yr, ")") else ""))
+      # Survey year is free text ("2020-21", "2019-2010", ...) so it is shown
+      # verbatim; year_used is the data request round it was submitted in.
+      yr <- if ("survey_year" %in% names(rec)) as.character(rec$survey_year[1]) else NA_character_
+      yu <- if ("year_used"   %in% names(rec)) as.character(rec$year_used[1])   else NA_character_
+      tags$div(
+        tags$span(
+          style = "font-size:13px;font-weight:600;color:#1F2B3A;",
+          paste0(nm, if (!is.na(yr) && nzchar(yr)) paste0(" (", yr, ")") else "")
+        ),
+        if (!is.na(yu) && nzchar(yu)) tags$div(
+          style = "font-size:11px;color:#55606B;margin-top:3px;",
+          paste0("Submitted as part of the ", yu, " data request.")
+        )
+      )
     }
+    is_active <- isTRUE(session_data$tu_no_update)
+    btn_class <- paste0("no-update-btn", if (is_active) " active" else "")
+    status_text <- if (is_active) "\u2713 Marked as no update" else ""
+
     tags$div(
       style = paste0(
         "background:#f0f6ff;border:1px solid #c5d7ee;border-radius:8px;",
@@ -1818,10 +2111,64 @@ server <- function(input, output, session) {
              "Most recent time use survey on record at the OECD"),
       tags$p(style = "font-size:11px;color:#55606B;margin:0 0 8px;line-height:1.5;",
              "This is the survey you previously submitted to us, shown here for your information. ",
-             "If this is still your latest time use survey, you do not need to fill in the tables below \u2014 ",
+             "If this is still your latest time use survey, you do not need to fill in the tables below; ",
              "just click ", tags$b("No time use data update to declare"), " to finish this page."),
-      detail
+      detail,
+      tags$div(
+        style = "margin-top:12px;display:flex;align-items:center;gap:10px;",
+        tags$button(
+          id = "tu_no_update_btn",
+          onclick = "declareTUNoUpdate()",
+          class = btn_class,
+          style = "background:#f5f5f5;color:#555;border:1px solid #ccc;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:12px;",
+          "No time use data update to declare"
+        ),
+        tags$span(id = "tu_no_update_status",
+                  style = "font-size:11px;color:#1F7A4D;font-weight:600;",
+                  status_text)
+      )
     )
+  })
+
+  # ── Time use survey details: name, year and notes ───────────────────────────
+  # Held in session_data$tu_meta so that editing them triggers the same
+  # auto-save as any other data. A debounced observer persists typing on its
+  # own, so there is nothing for the user to press.
+  tu_meta_saved_at <- reactiveVal(NULL)
+  # FALSE until the browser has echoed back the values restored at login.
+  # Until then a blank read is treated as "not loaded yet" rather than as the
+  # user having cleared the fields; afterwards, clearing them does persist.
+  tu_meta_synced   <- reactiveVal(FALSE)
+
+  tu_meta_inputs <- debounce(reactive({
+    list(survey_name = input$tu_survey_name %||% "",
+         survey_year = input$tu_survey_year,
+         notes       = input$tu_notes %||% "")
+  }), 1200)
+
+  tu_meta_is_blank <- function(m) {
+    blank <- function(v) {
+      is.null(v) || length(v) != 1 || is.na(v) || !nzchar(trimws(as.character(v)))
+    }
+    blank(m$survey_name) && blank(m$survey_year) && blank(m$notes)
+  }
+
+  observe({
+    req(credentials$authenticated)
+    m   <- tu_meta_inputs()
+    cur <- isolate(session_data$tu_meta)
+    if (!isolate(tu_meta_synced())) {
+      if (tu_meta_is_blank(m) && length(cur) > 0 && !tu_meta_is_blank(cur)) return()
+      tu_meta_synced(TRUE)
+    }
+    if (identical(m, cur)) return()
+    session_data$tu_meta <- m
+    tu_meta_saved_at(Sys.time())
+  })
+
+  output$tu_meta_status <- renderText({
+    ts <- tu_meta_saved_at()
+    if (is.null(ts)) "" else paste0("\u2713 Saved at ", format(ts, "%H:%M"))
   })
 
   # ── Time Use table outputs ───────────────────────────────────────────────────
@@ -1839,7 +2186,8 @@ server <- function(input, output, session) {
                               row_text = time_use_row_text_2,
                               saved    = session_data$time_use_2,
                               table_num = 2,
-                              no_update_active = isTRUE(session_data$tu_no_update_2)))
+                              no_update_active = isTRUE(session_data$tu_no_update_2),
+                              numeric_only = FALSE))
   })
 
   # ── Response-format HTML builder ─────────────────────────────────────────────
@@ -1856,7 +2204,7 @@ server <- function(input, output, session) {
     oecd_rows <- paste(mapply(function(lbl, val) {
       paste0("<tr>",
              "<td style='font-size:11px;font-weight:600;color:#555;padding:3px 8px 3px 0;vertical-align:top;white-space:nowrap;'>", lbl, "</td>",
-             "<td style='font-size:11px;padding:3px 0;color:#333;'>", if (is.na(val)) "\u2014" else linkify(val), "</td>",
+             "<td style='font-size:11px;padding:3px 0;color:#333;'>", if (is.na(val)) "-" else linkify(val), "</td>",
              "</tr>")
     }, resp$label$label, resp$label$response, SIMPLIFY = TRUE), collapse = "")
     oecd_html <- paste0("<table style='width:100%;border-collapse:collapse;'>", oecd_rows, "</table>")
@@ -2137,7 +2485,8 @@ server <- function(input, output, session) {
           list(key="country_avg", label="Country average",       bold=TRUE),
           list(key="vert",        label="Vertical inequality",   bold=FALSE,
                tooltip="To calculate vertical inequality data (bottom 20% and top 20%), sort the data you have from the lowest score given to the highest level of the indicator declared, and (after weighting) you divide the results in five equal parts. Then, calculate the average of the group with the highest 20% and lowest 20% of scores."),
-          list(key="dep",         label="Deprivation",           bold=FALSE),
+          list(key="dep",         label="Deprivation",           bold=FALSE,
+               tooltip="Share of people reporting a score equal to 4 or below"),
           list(key="male",        label="Male",                  bold=FALSE),
           list(key="female",      label="Female",                bold=FALSE),
           list(key="young",       label=al$young,                bold=FALSE),
@@ -2160,7 +2509,9 @@ server <- function(input, output, session) {
     }
 
     make_year_inputs <- function(m) {
-      saved <- isolate(committed_entries())[[m]]
+      # Read from session_data$entries (live data) so that uploaded-but-not-yet-
+      # submitted values appear in the input fields for user review.
+      saved <- isolate(session_data$entries[[m]])
       saved_flags <- isolate(session_data$flags[[m]])
       rows  <- row_defs(m)
       label_w <- "180px"
@@ -2195,7 +2546,7 @@ server <- function(input, output, session) {
 
       # Flag options
       flag_codes <- c("", "B", "E", "P", "D", "U")
-      flag_labels <- c("\u2014", "B", "E", "P", "D", "U")
+      flag_labels <- c("-", "B", "E", "P", "D", "U")
 
       # Helper: look up existing data row from d_full, falling back to non-used
       # Returns list(row = data.frame, source = "published"|"nonused"|"none")
@@ -2398,13 +2749,13 @@ server <- function(input, output, session) {
                  submitted = logical(), differs = logical(), revised = logical())
     }
 
-    # Measures that already have at least one submitted value (any breakdown)
-    submitted_measures <- names(entries)[vapply(names(entries), function(m) {
-      any(vapply(entries[[m]], function(row_data) {
-        is.list(row_data) &&
-          any(vapply(row_data, function(v) !is.null(v) && !is.na(v) && v != "", logical(1)))
-      }, logical(1)))
-    }, logical(1))]
+    # Measures the user has explicitly confirmed via the Submit button.
+    # Uploading a template or using "Save and continue" populates entries
+    # but must NOT mark an indicator complete - only an explicit Submit does.
+    explicit_submit_now <- isolate(session_data$explicit_submit)
+    submitted_measures <- names(explicit_submit_now)[
+      vapply(explicit_submit_now, isTRUE, logical(1))
+    ]
 
     # Measures marked "no data update to declare"
     no_updates_now <- isolate(session_data$no_updates)
@@ -2425,14 +2776,27 @@ server <- function(input, output, session) {
     tu2_done <- !is.null(isolate(session_data$time_use_2))
     tu_complete <- isTRUE(isolate(session_data$tu_no_update)) || (tu1_done && tu2_done)
 
-    # Non-used country-average data (for heatmap cell coloring, year-specific)
+    # Non-used data (for heatmap cell coloring, year-specific). Measures with
+    # no country-average row (e.g. 8_2 voter turnout) are matched on their
+    # population-group rows instead of the _T/_T/_T aggregate.
     nonused_heatmap <- d_nonused %>%
-      filter(sex == "_T", age == "_T", education_lev == "_T",
-             !grepl("_DEP$|_VER$", measure)) %>%
-      filter(!is.na(obs_value)) %>%
+      filter(!grepl("_DEP$|_VER$", measure), !is.na(obs_value)) %>%
+      filter(if_else(measure %in% no_country_average,
+                     !(sex == "_T" & age == "_T" & education_lev == "_T"),
+                     sex == "_T" & age == "_T" & education_lev == "_T")) %>%
       select(measure, time_period) %>%
       distinct() %>%
       mutate(has_nonused = TRUE)
+
+    # Published population-group data for measures collected by breakdown only.
+    # On the submissions heatmap these drive the "already published" (green)
+    # cells; the coverage heatmap keeps using country-level figures.
+    group_only_published <- d_full %>%
+      filter(measure %in% no_country_average,
+             !(sex == "_T" & age == "_T" & education_lev == "_T"),
+             !is.na(obs_value)) %>%
+      distinct(measure, time_period) %>%
+      mutate(group_published = TRUE)
 
     # ── Pipeline helper: build heatmap HTML ────────────────────────────────────
     # coverage_mode = TRUE  → show all measures, all read-only, no ⚠ badge
@@ -2463,6 +2827,18 @@ server <- function(input, output, session) {
           else
             mutate(., n_countries = NA_integer_)
         } %>%
+        # Breakdown-only measures (8_2 voter turnout): on the submissions
+        # heatmap a year counts as published when population-group data exist,
+        # regardless of whether a country-level figure is available.
+        left_join(group_only_published, by = c("measure", "time_period")) %>%
+        mutate(
+          group_published = replace_na(group_published, FALSE),
+          obs_value = if (coverage_mode) obs_value else if_else(
+            measure %in% no_country_average,
+            if_else(group_published, 1, NA_real_),
+            obs_value
+          )
+        ) %>%
         mutate(
           submitted = replace_na(submitted, FALSE),
           revised = replace_na(revised, FALSE),
@@ -2472,6 +2848,10 @@ server <- function(input, output, session) {
           revised_existing = !coverage_mode & submitted & differs,
           # Submitted this session and then overwritten with a different value.
           revised_session  = !coverage_mode & submitted & revised & is.na(obs_value),
+          # A revision was recorded for this year (e.g. a blank cell uploaded
+          # over a previously-filled value) but nothing is currently filled -
+          # i.e. the value was cleared/removed rather than replaced.
+          revised_cleared  = !coverage_mode & revised & !submitted,
           has_nonused = replace_na(has_nonused, FALSE),
           n_countries = replace_na(n_countries, 0L),
           # Fraction of countries with data (0-1), used for gap gradient
@@ -2486,6 +2866,7 @@ server <- function(input, output, session) {
           ),
           color = case_when(
             revised_existing                                ~ "#009EDB",
+            revised_cleared                                 ~ "#009EDB",
             revised_session                                 ~ "#B4530A",
             !is.na(obs_value)                               ~ "#1F7A4D",
             submitted                                       ~ "#F89C1C",
@@ -2496,6 +2877,7 @@ server <- function(input, output, session) {
           ),
           tooltip = case_when(
             revised_existing                   ~ "Revision of existing data",
+            revised_cleared                    ~ "Revision: previously reported value removed",
             revised_session                    ~ "Submitted this session, then revised",
             !is.na(obs_value)                  ~ "",
             !coverage_mode & has_nonused       ~ "Previously submitted (not used)",
@@ -2568,6 +2950,17 @@ server <- function(input, output, session) {
 
           is_no_update = measure %in% no_update_measures,
 
+          note_html = sapply(measure, function(m) {
+            nt <- measure_notes[[m]]
+            if (is.null(nt) || !nzchar(nt)) return("")
+            paste0(
+              "<div style='background:#FFF8E1;border:1px solid #F5C518;border-radius:6px;padding:10px 14px;margin-bottom:12px;'>",
+              "<strong style='font-size:12px;color:#8a6d1a;'>Please note</strong>",
+              "<p style='font-size:11px;color:#444;margin:4px 0 0;line-height:1.5;'>",
+              htmltools::htmlEscape(nt), "</p></div>"
+            )
+          }),
+
           comment_html = sapply(measure, function(m) {
             country_comments <- oecd_comments[[country_iso]]
             cmt <- if (!is.null(country_comments) && m %in% names(country_comments)) country_comments[[m]] else NULL
@@ -2580,7 +2973,7 @@ server <- function(input, output, session) {
             )
           }),
 
-          panel_body = mapply(function(ni, itu, sid, mn, yi, yc, q, oqh, cqh, def, tech, unt, lbl, is_nu, cmth) {
+          panel_body = mapply(function(ni, itu, sid, mn, yi, yc, q, oqh, cqh, def, tech, unt, lbl, is_nu, nth) {
             if (ni) {
               nu_active <- if (is_nu) " active" else ""
               paste0(
@@ -2591,20 +2984,31 @@ server <- function(input, output, session) {
                 "<div style='margin-top:6px;'>", cqh, "</div></div>",
                 "</div>",
                 "<hr style='margin:0;border:none;border-top:1px solid #ddd;'/>",
+                nth,
                 "<div style='width:100%;'>",
                 "<strong style='font-size:13px;margin-left:180px;'>Enter Data</strong>",
                 "<div style='font-size:11px;color:#888;margin:2px 0 0 180px;'>Please add any comments on values to the <i>Other useful information</i> box above</div>",
                 "<div id='inputs_", sid, "' data-safeid='", sid, "' data-measure='", mn, "' style='display:flex;flex-direction:row;flex-wrap:wrap;margin-top:8px;'>", yi, "</div>",
-                "<div style='margin-top:10px;display:flex;align-items:center;flex-wrap:wrap;gap:8px;'>",
+                # Status/validation messages sit on their own full-width line
+                # above the buttons: the out-of-range list can be long, and
+                # inside the button row it would wrap and shift the buttons.
+                "<div id='status_", sid, "' style='margin-top:10px;font-size:11px;color:green;",
+                "font-weight:600;line-height:1.45;word-break:break-word;'></div>",
+                "<div style='margin-top:10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;'>",
+                "<button onclick=\"saveAndContinue('", sid, "','", mn, "')\" ",
+                "style='background:#003189;color:#fff;border:none;padding:9px 22px;border-radius:5px;cursor:pointer;font-size:13px;font-weight:700;",
+                "box-shadow:0 1px 3px rgba(0,49,137,0.35);'>",
+                "Save and continue</button>",
+                "<div style='display:flex;align-items:center;flex-wrap:wrap;gap:8px;'>",
                 "<button onclick=\"submitMeasure('", sid, "','", mn, "')\" ",
-                "style='background:#009EDB;color:white;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;'>",
+                "style='background:#f5f5f5;color:#555;border:1px solid #ccc;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:600;'>",
                 "&#10003; Submit data</button>",
                 "<span style='font-size:11px;color:#888;'>or</span>",
                 "<button id='noupdate_", sid, "' onclick=\"declareNoUpdate('", sid, "','", mn, "')\" ",
                 "class='no-update-btn", nu_active, "' ",
-                "style='background:#f5f5f5;color:#555;border:1px solid #ccc;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:11px;'>",
+                "style='background:#f5f5f5;color:#555;border:1px solid #ccc;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:600;'>",
                 "No data update to declare</button>",
-                "<span id='status_", sid, "' style='margin-left:4px;font-size:11px;color:green;'></span>",
+                "</div>",
                 "</div></div>"
               )
             } else if (itu) {
@@ -2654,6 +3058,7 @@ server <- function(input, output, session) {
             }
           }, needs_input, is_time_use, safe_id, measure, year_inputs, year_chart, question,
           oecd_q_html, country_q_html, def_text, tech_name, unit_text, label, is_no_update,
+          note_html,
           SIMPLIFY = TRUE, USE.NAMES = FALSE),
 
           row_html = paste0(
@@ -2708,8 +3113,9 @@ server <- function(input, output, session) {
   })
 
   # ── Data submission observers ─────────────────────────────────────────────────
-  # Store a measure's values, recording any overwrites of existing non-empty
-  # values as revisions. Shared by the Submit button and the autosave listener.
+  # Store a measure's values, recording any overwrites (or clearing) of
+  # existing non-empty values as revisions. Shared by the Submit button, the
+  # "Save and continue" listener, and the Excel template upload handler.
   store_measure <- function(d, record_revisions = TRUE) {
     n_revised <- 0L
     prev <- session_data$entries[[d$measure]]
@@ -2723,13 +3129,19 @@ server <- function(input, output, session) {
         for (yr in names(old_row)) {
           old_v <- old_row[[yr]]
           new_v <- new_row[[yr]]
-          if (is_filled(old_v) && is_filled(new_v) &&
-              !identical(as.character(old_v), as.character(new_v))) {
+          old_filled <- is_filled(old_v)
+          new_filled <- is_filled(new_v)
+          # A revision is either a filled value changing to a different
+          # filled value, OR a previously filled value being cleared (blank).
+          changed <- old_filled &&
+            ((new_filled && !identical(as.character(old_v), as.character(new_v))) ||
+             !new_filled)
+          if (changed) {
             rev_m[[bk]] <- rev_m[[bk]] %||% list()
             rev_m[[bk]][[yr]] <- c(
               rev_m[[bk]][[yr]] %||% list(),
               list(list(from = as.character(old_v),
-                        to   = as.character(new_v),
+                        to   = if (new_filled) as.character(new_v) else "",
                         at   = Sys.time()))
             )
             n_revised <- n_revised + 1L
@@ -2745,13 +3157,26 @@ server <- function(input, output, session) {
     invisible(n_revised)
   }
 
-  # Autosave: persists values to disk so nothing is lost if a session is
-  # interrupted, but deliberately does NOT record revisions or refresh the
-  # heatmap — intermediate keystrokes are not submissions.
-  observeEvent(input$autosaved_data, {
+  # Persist a measure's values via store_measure() AND immediately publish
+  # the change to the committed snapshot so the heatmap and panels reflect
+  # it. "Save and continue" and "Submit data" conserve values identically -
+  # both call this - the only thing Submit does on top is mark the measure
+  # complete (session_data$explicit_submit).
+  commit_measure <- function(d, record_revisions = TRUE) {
+    n_revised <- store_measure(d, record_revisions = record_revisions)
+    committed_entries(session_data$entries)
+    committed_revisions(session_data$revisions)
+    bump_ui()
+    invisible(n_revised)
+  }
+
+  # "Save and continue": user-triggered draft save. Conserves values and
+  # refreshes the heatmap exactly like Submit, but does NOT mark the
+  # indicator complete - that only happens on an explicit Submit click.
+  observeEvent(input$saved_draft_data, {
     req(credentials$authenticated)
-    d <- input$autosaved_data
-    store_measure(d, record_revisions = FALSE)
+    d <- input$saved_draft_data
+    commit_measure(d, record_revisions = TRUE)
     runjs(paste0("
       var el = document.getElementById('status_", d$safe_id, "');
       if(el) { el.style.color = '#888'; el.innerText = 'Draft saved at ", format(Sys.time(), "%H:%M:%S"), "'; }
@@ -2760,7 +3185,13 @@ server <- function(input, output, session) {
 
   observeEvent(input$submitted_data, {
     d <- input$submitted_data
-    n_session_rev <- store_measure(d, record_revisions = TRUE)
+
+    # Only an explicit Submit click marks the measure as officially
+    # submitted / complete (uploads and "Save and continue" never do). Set
+    # this before commit_measure() so the heatmap rebuild it triggers
+    # already sees the updated flag.
+    session_data$explicit_submit[[d$measure]] <- TRUE
+    n_session_rev <- commit_measure(d, record_revisions = TRUE)
 
     # Also count values that differ from the already-published figures, since
     # that is the kind of revision reviewers most want explained. Wrapped
@@ -2786,10 +3217,6 @@ server <- function(input, output, session) {
 
     n_rev <- max(n_session_rev, n_published_rev)
 
-    # Publishing to the committed snapshot is what refreshes the heatmap.
-    committed_entries(session_data$entries)
-    committed_revisions(session_data$revisions)
-    bump_ui()
     runjs(paste0("
       var el = document.getElementById('status_", d$safe_id, "');
       if(el) { el.style.color = '#1F7A4D'; el.innerText = '\\u2713 Saved at ", format(Sys.time(), "%H:%M:%S"), "'; }
@@ -2911,7 +3338,8 @@ server <- function(input, output, session) {
     wb_badge_js <- if (remaining_wb > 0) paste0("'", remaining_wb, "'") else "null"
     tu_badge_js <- if (!tu_done) "'!'" else "null"
 
-    all_complete <- remaining_wb == 0 && tu_done
+    # Once finalised the submit bar gives way to the record-copy bar.
+    all_complete <- remaining_wb == 0 && tu_done && is.null(session_data$finalized)
     final_bar_js <- if (all_complete) {
       "document.getElementById('final_submit_bar').style.display='block';"
     } else {
@@ -2956,6 +3384,34 @@ server <- function(input, output, session) {
     # Show confirmation overlay
     runjs("document.getElementById('final_submit_confirm').style.display='flex';")
     runjs("document.getElementById('final_submit_bar').style.display='none';")
+  })
+
+  # Persistent bar shown after finalisation: confirms the submission and keeps
+  # the record copy downloadable on later visits.
+  output$finalized_bar <- renderUI({
+    req(credentials$authenticated)
+    fin <- session_data$finalized
+    if (is.null(fin)) return(NULL)
+    tags$div(
+      style = paste0(
+        "position:fixed;bottom:0;left:0;width:100%;z-index:8900;",
+        "background:#1F7A4D;box-shadow:0 -4px 16px rgba(0,0,0,0.15);",
+        "padding:12px 0;text-align:center;"
+      ),
+      tags$div(
+        style = "display:flex;align-items:center;justify-content:center;gap:20px;flex-wrap:wrap;",
+        tags$span(
+          style = "color:rgba(255,255,255,0.95);font-size:13px;font-weight:500;",
+          paste0("\u2713 Submitted on ", format(fin, "%d %B %Y at %H:%M"), ".")
+        ),
+        downloadButton("dl_submission_copy_bar", "Download a copy for your records",
+          icon = icon("download"),
+          style = paste0(
+            "background:rgba(255,255,255,0.15);color:white;border:1px solid rgba(255,255,255,0.6);",
+            "padding:7px 18px;border-radius:5px;font-size:12px;font-weight:600;"
+          ))
+      )
+    )
   })
 
   # ── Admin ───────────────────────────────────────────────────────────────────

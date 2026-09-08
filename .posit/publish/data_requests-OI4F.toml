@@ -9,6 +9,9 @@ files = [
     "/app.R",
     "/.posit/publish/data_requests-OI4F.toml",
     "/.posit/publish/deployments/deployment-F8NK.toml",
+    "/data",
+    "/global.R",
+    "/www",
 ]
 validate = true
 product_type = "connect_cloud"

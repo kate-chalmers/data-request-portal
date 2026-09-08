@@ -309,7 +309,7 @@ input[type=number] { -moz-appearance: textfield; }
 
 /* ── Max-width constraints ───────────────────────────────────────────────── */
 
-/* Dropdown/select inputs — prevent extreme stretching on wide screens */
+/* Dropdown/select inputs - prevent extreme stretching on wide screens */
 select.form-control,
 .selectize-control,
 .selectize-input,
@@ -328,7 +328,7 @@ textarea.form-control {
   max-width: 1050px;
 }
 
-/* Main content columns — cap at a readable width */
+/* Main content columns - cap at a readable width */
 .heatmap-content {
   max-width: 1200px;
   margin: 0 auto;
