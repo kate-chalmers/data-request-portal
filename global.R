@@ -11,9 +11,10 @@ oecd_countries <- c("AUS", "AUT", "BEL", "CAN", "CHL", "COL", "CZE", "DNK", "EST
                     "SVN", "ESP", "SWE", "CHE", "TUR", "GBR", "USA", "CRI")
 
 eu_silc_countries <- c("AUT", "BEL", "BGR", "CYP", "CZE", "DNK", "EST", "FIN", "FRA",
-                       "DEU", "GRC", "HUN", "ISL", "IRL", "ITA", "LVA", "LTU", "LUX",
-                       "MLT", "NLD", "NOR", "POL", "PRT", "ROU", "SRB", "SVK", "SVN",
-                       "ESP", "SWE", "CHE", "TUR")
+                      "DEU", "GRC", "HUN", "ISL", "IRL", "ITA", "LVA", "LTU", "LUX",
+                      "MLT", "NLD", "NOR", "POL", "PRT", "ROU", "SRB", "SVK", "SVN",
+                      "ESP", "SWE", "CHE", "TUR", "HRV", "MKD", "MNE", "ALB", "BIH",
+                      "XKX")
 
 oecd_names <- c("Australia", "Austria", "Belgium", "Canada", "Chile", "Colombia", "Czechia", "Denmark", "Estonia",
                 "Finland", "France", "Germany", "Greece", "Hungary", "Iceland", "Ireland", "Israel", "Italy", "Japan",
@@ -313,19 +314,43 @@ country_prefill <- lapply(.prev_resp_raw, function(country_df) {
 rm(.prev_resp_raw)
 
 # ── OECD comments per country × measure ─────────────────────────────────────
-# Excel file with columns: ref_area (ISO3), measure, comment
-# Loaded as a nested list: oecd_comments[["AUT"]][["1_5"]] → "comment text"
+# Excel file with columns: ref_area (ISO3), measure, comment, and an optional
+# reason column explaining why a figure could not be used or published (e.g.
+# "5-point scale rather than 11-point scale used by the OECD").
+# Loaded as two nested lists of the same shape:
+#   oecd_comments[["AUT"]][["1_5"]] → "comment text"
+#   oecd_reasons[["AUT"]][["1_5"]]  → "reason text"   (absent where blank)
 oecd_comments_file <- "data/oecd_comments.xlsx"
-oecd_comments <- if (file.exists(oecd_comments_file)) {
-  .cmt_raw <- readxl::read_excel(oecd_comments_file) %>%
+
+.cmt_raw <- if (file.exists(oecd_comments_file)) {
+  readxl::read_excel(oecd_comments_file) %>%
     filter(!is.na(comment), nzchar(comment))
-  .cmt_list <- split(.cmt_raw, .cmt_raw$ref_area)
-  res <- lapply(.cmt_list, function(df) setNames(as.character(df$comment), df$measure))
-  rm(.cmt_raw, .cmt_list)
-  res
+} else {
+  NULL
+}
+
+oecd_comments <- if (!is.null(.cmt_raw)) {
+  lapply(split(.cmt_raw, .cmt_raw$ref_area),
+         function(df) setNames(as.character(df$comment), df$measure))
 } else {
   list()
 }
+
+# The reason column is optional, and is blank for most rows.
+oecd_reasons <- if (!is.null(.cmt_raw) && "reason" %in% names(.cmt_raw)) {
+  .rsn <- .cmt_raw %>% filter(!is.na(reason), nzchar(reason))
+  if (nrow(.rsn) > 0) {
+    lapply(split(.rsn, .rsn$ref_area),
+           function(df) setNames(as.character(df$reason), df$measure))
+  } else {
+    list()
+  }
+} else {
+  list()
+}
+
+rm(.cmt_raw)
+if (exists(".rsn")) rm(.rsn)
 
 # ── Last time use survey previously submitted, per country ───────────────────
 # Long-format RDS with columns: name, value, ref_area, year_used.

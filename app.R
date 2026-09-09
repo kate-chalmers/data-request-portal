@@ -44,7 +44,13 @@ shared_head <- tagList(
       var rowRanges = window.__rowValidRanges || {};
       if (!range && Object.keys(rowRanges).length === 0) return true;
 
-      var bad = [];
+      // Every offending box turns red, but the written explanation is
+      // aggregated: one sentence per distinct expected range rather than one
+      // per field. A second sentence therefore appears only when values breach
+      // two genuinely different ranges (i.e. two different units).
+      var nBad = 0;
+      var groups = {};       // 'min-max' -> {min, max, n}
+      var groupOrder = [];   // first-seen order, so the message is stable
       inputs.forEach(function(inp) {
         if (inp.value === '') return;
         var v = parseFloat(inp.value);
@@ -53,17 +59,29 @@ shared_head <- tagList(
         var r = rowRanges[rowKey] || range;
         if (!r) { inp.style.border = '1px solid #ccc'; return; }
         if (v < r.min || v > r.max) {
-          bad.push(inp.dataset.year + ' (' + inp.dataset.row + '): ' + v + ' [expected ' + r.min + '-' + r.max + ']');
+          var key = r.min + '-' + r.max;
+          if (!groups[key]) {
+            groups[key] = { min: r.min, max: r.max, n: 0 };
+            groupOrder.push(key);
+          }
+          groups[key].n++;
+          nBad++;
           inp.style.border = '2px solid #E63312';
         } else {
           inp.style.border = '1px solid #ccc';
         }
       });
-      if (bad.length > 0) {
+      if (nBad > 0) {
         var statusEl = document.getElementById('status_' + safe_id);
         if (statusEl) {
+          var parts = groupOrder.map(function(k) {
+            var g = groups[k];
+            return g.n + (g.n === 1 ? ' value is' : ' values are') +
+                   ' outside the expected range of ' + g.min + ' to ' + g.max;
+          });
           statusEl.style.color = '#E63312';
-          statusEl.innerText = 'Values out of range: ' + bad.length + ' field(s) - ' + bad.join('; ') + '. Please correct before submitting.';
+          statusEl.innerText = parts.join('; ') +
+            '. The affected fields are highlighted in red - please correct them before submitting.';
         }
         return false;
       }
@@ -2974,8 +2992,8 @@ server <- function(input, output, session) {
             nt <- measure_notes[[m]]
             if (is.null(nt) || !nzchar(nt)) return("")
             paste0(
-              "<div style='background:#FFF8E1;border:1px solid #F5C518;border-radius:6px;padding:10px 14px;margin-bottom:12px;'>",
-              "<strong style='font-size:12px;color:#8a6d1a;'>Please note</strong>",
+              "<div style='background:#f0f6ff;border:1px solid #c5d7ee;border-radius:6px;padding:10px 14px;margin-bottom:12px;'>",
+              "<strong style='font-size:12px;color:#003189;'>Please note</strong>",
               "<p style='font-size:11px;color:#444;margin:4px 0 0;line-height:1.5;'>",
               htmltools::htmlEscape(nt), "</p></div>"
             )
@@ -2985,15 +3003,27 @@ server <- function(input, output, session) {
             country_comments <- oecd_comments[[country_iso]]
             cmt <- if (!is.null(country_comments) && m %in% names(country_comments)) country_comments[[m]] else NULL
             if (is.null(cmt) || !nzchar(cmt)) return("")
+            # Optional second part: the specific reason the figure could not be
+            # used, where the comments file supplies one.
+            country_reasons <- oecd_reasons[[country_iso]]
+            rsn <- if (!is.null(country_reasons) && m %in% names(country_reasons)) country_reasons[[m]] else NULL
+            rsn_html <- if (!is.null(rsn) && nzchar(rsn)) {
+              paste0(
+                "<p style='font-size:11px;color:#444;margin:8px 0 0;line-height:1.5;'>",
+                "<strong>Reason not included:</strong> ",
+                htmltools::htmlEscape(rsn), "</p>"
+              )
+            } else ""
             paste0(
-              "<div style='background:#f0f6ff;border:1px solid #c5d7ee;border-radius:6px;padding:10px 14px;margin-bottom:12px;'>",
-              "<strong style='font-size:12px;color:#003189;'>OECD Comment</strong>",
+              "<div style='background:#FFF8E1;border:1px solid #F5C518;border-radius:6px;padding:10px 14px;margin-bottom:12px;'>",
+              "<strong style='font-size:12px;color:#8a6d1a;'>OECD Comment</strong>",
               "<p style='font-size:11px;color:#444;margin:4px 0 0;line-height:1.5;'>",
-              htmltools::htmlEscape(cmt), "</p></div>"
+              htmltools::htmlEscape(cmt), "</p>",
+              rsn_html, "</div>"
             )
           }),
 
-          panel_body = mapply(function(ni, itu, sid, mn, yi, yc, q, oqh, cqh, def, tech, unt, lbl, is_nu, nth) {
+          panel_body = mapply(function(ni, itu, sid, mn, yi, yc, q, oqh, cqh, def, tech, unt, lbl, is_nu, nth, cth) {
             if (ni) {
               nu_active <- if (is_nu) " active" else ""
               paste0(
@@ -3005,13 +3035,14 @@ server <- function(input, output, session) {
                 "</div>",
                 "<hr style='margin:0;border:none;border-top:1px solid #ddd;'/>",
                 nth,
+                cth,
                 "<div style='width:100%;'>",
                 "<strong style='font-size:13px;margin-left:180px;'>Enter Data</strong>",
                 "<div style='font-size:11px;color:#888;margin:2px 0 0 180px;'>Please add any comments on values to the <i>Other useful information</i> box above</div>",
                 "<div id='inputs_", sid, "' data-safeid='", sid, "' data-measure='", mn, "' style='display:flex;flex-direction:row;flex-wrap:wrap;margin-top:8px;'>", yi, "</div>",
                 # Status/validation messages sit on their own full-width line
-                # above the buttons: the out-of-range list can be long, and
-                # inside the button row it would wrap and shift the buttons.
+                # above the buttons: the message can still wrap, and inside the
+                # button row it would shift the buttons.
                 "<div id='status_", sid, "' style='margin-top:10px;font-size:11px;color:green;",
                 "font-weight:600;line-height:1.45;word-break:break-word;'></div>",
                 "<div style='margin-top:10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;'>",
@@ -3058,9 +3089,8 @@ server <- function(input, output, session) {
                 yc, "</div>",
                 "<hr style='margin:4px 0;border:none;border-top:1px solid #ddd;'/>",
                 "<div style='width:100%;'>",
-                "<strong style='font-size:13px;'>Other useful information</strong>",
-                "<p style='font-size:11px;color:#888;margin:4px 0 6px;'>Add any relevant context, caveats, source notes, or technical observations. ",
-                "<strong>If you have revised any figures, please explain the change here.</strong></p>",
+                "<strong style='font-size:13px;'>Any comments or questions?</strong>",
+                "<p style='font-size:11px;color:#888;margin:4px 0 6px;'>Add any relevant context, caveats, source notes, or technical observations about your country's data not included in the above defintion. ",
                 "<div id='revnote_", sid, "' style='display:none;font-size:11px;color:#8a6d1a;",
                 "background:#FFF8E1;border:1px solid #F5C518;border-radius:6px;",
                 "padding:8px 10px;margin:0 0 6px;line-height:1.5;'></div>",
@@ -3078,7 +3108,7 @@ server <- function(input, output, session) {
             }
           }, needs_input, is_time_use, safe_id, measure, year_inputs, year_chart, question,
           oecd_q_html, country_q_html, def_text, tech_name, unit_text, label, is_no_update,
-          note_html,
+          note_html, comment_html,
           SIMPLIFY = TRUE, USE.NAMES = FALSE),
 
           row_html = paste0(
@@ -3092,7 +3122,6 @@ server <- function(input, output, session) {
             "</div>",
             "<div id='panel_", safe_id, "' class='collapsible-panel' style='display:none;flex-direction:column;gap:14px;padding:16px;margin-bottom:6px;",
             panel_border, "'>",
-            comment_html,
             panel_body,
             "</div>"
           )
@@ -3333,17 +3362,16 @@ server <- function(input, output, session) {
   observe({
     req(credentials$authenticated)
 
-    entries    <- committed_entries()
     no_updates <- session_data$no_updates
 
-    # Well-being: count remaining indicators
-    # A measure is "submitted" if any breakdown key has at least one value
-    submitted_measures <- names(entries)[vapply(names(entries), function(m) {
-      any(vapply(entries[[m]], function(row_data) {
-        is.list(row_data) &&
-          any(vapply(row_data, function(v) !is.null(v) && !is.na(v) && v != "", logical(1)))
-      }, logical(1)))
-    }, logical(1))]
+    # Well-being: count remaining indicators. Only an explicit Submit counts as
+    # done - "Save and continue" and template uploads conserve values but leave
+    # the indicator incomplete, so having values is NOT sufficient here. This is
+    # the same source of truth as the per-indicator completion badge.
+    explicit_submit <- session_data$explicit_submit
+    submitted_measures <- names(explicit_submit)[
+      vapply(explicit_submit, isTRUE, logical(1))
+    ]
     no_update_measures <- names(no_updates)[vapply(no_updates, isTRUE, logical(1))]
 
     is_eu_silc <- credentials$country %in% eu_silc_countries

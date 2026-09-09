@@ -1,0 +1,7 @@
+# Scripts kept alongside the app but never deployed. They use packages that
+# are not installed here (ggtext, metrica, oecdcountrycode), which made
+# rsconnect's pre-flight renv snapshot abort during deployment.
+NO DEPLOY/
+test.py
+.Rproj.user/
+rsconnect/

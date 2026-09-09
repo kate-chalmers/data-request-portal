@@ -5,7 +5,9 @@
     },
     "edit": {
       "*.R": "allow",
-      "*.css": "allow"
+      "*.css": "allow",
+      "*/.renvignore": "allow",
+      "*/.rscignore": "allow"
     },
     "bash": {
       "Rscript *": "allow",
