@@ -4,6 +4,78 @@ library(shinyjs)
 library(echarts4r)
 library(DT)
 library(writexl)
+library(pins)
+
+# ── Persistent session storage (pins) ─────────────────────────────────────────
+# On hosted platforms (Posit Connect Cloud, shinyapps.io) the local file
+# system is ephemeral: anything written at runtime is lost when the worker
+# restarts. Saved sessions therefore live on a pins board backed by a Google
+# Drive folder.
+#
+# Authentication uses a cached OAuth token for a *real* Google account.
+# (A service account cannot be used here: Google gives service accounts no
+# Drive storage quota, so their writes to a My Drive folder fail with 403.)
+#
+# One-time setup — run this interactively in the console:
+#   googledrive::drive_auth(cache = "drive-token")
+# and log in as the Google account that owns the folder below, granting Drive
+# access. The token lands in "drive-token/". The folder name must NOT start
+# with a dot: rsconnect excludes hidden files from deployment bundles, which
+# silently breaks persistence on the server. Keep it out of git but IN the
+# deployment bundle (deploy with rsconnect::deployApp(), not via GitHub).
+#
+# If no cached token is found, a local folder board under "sessions/" is used,
+# so development needs no credentials (but nothing persists on a server!).
+
+gdrive_sessions_folder <-
+  "https://drive.google.com/drive/folders/1eKx4D63BnWe-npz2XrXgJaXwpuTbGCHe"
+
+session_board <- if (dir.exists("drive-token") && length(list.files("drive-token")) > 0) {
+  options(gargle_oauth_cache = "drive-token", gargle_oauth_email = TRUE)
+  googledrive::drive_auth()
+  board_gdrive(gdrive_sessions_folder)
+} else {
+  message("Session storage: using LOCAL folder board (no cached Drive token found). ",
+          "Fine for development; sessions will NOT persist on a hosted server.")
+  board_folder("sessions")
+}
+
+# Read a stored object by pin name; NULL if absent or unreadable. (No upfront
+# pin_exists() check: that would double the API round-trips per read, and
+# pin_read() errors on missing pins anyway.)
+session_read <- function(name) {
+  tryCatch(pin_read(session_board, name), error = function(e) NULL)
+}
+
+# Write an object; returns TRUE on success, FALSE (with a warning) on failure.
+session_write <- function(x, name) {
+  tryCatch({
+    suppressMessages(
+      pin_write(session_board, x, name = name, type = "rds", versioned = FALSE)
+    )
+    TRUE
+  }, error = function(e) {
+    warning("Failed to write pin '", name, "': ", conditionMessage(e))
+    FALSE
+  })
+}
+
+session_delete <- function(name) {
+  tryCatch({ pin_delete(session_board, name); TRUE }, error = function(e) FALSE)
+}
+
+# Saved country sessions are pins named by three-letter ISO code.
+session_list_countries <- function() {
+  tryCatch(grep("^[A-Z]{3}$", pin_list(session_board), value = TRUE),
+           error = function(e) character(0))
+}
+
+# Everything the app stores: country sessions plus the password/feedback pins.
+session_list_all <- function() {
+  tryCatch(grep("^([A-Z]{3}|passwords|feedback)$", pin_list(session_board),
+                value = TRUE),
+           error = function(e) character(0))
+}
 
 oecd_countries <- c("AUS", "AUT", "BEL", "CAN", "CHL", "COL", "CZE", "DNK", "EST", "FIN",
                     "FRA", "DEU", "GRC", "HUN", "ISL", "IRL", "ISR", "ITA", "JPN", "KOR",
@@ -351,6 +423,39 @@ oecd_reasons <- if (!is.null(.cmt_raw) && "reason" %in% names(.cmt_raw)) {
 
 rm(.cmt_raw)
 if (exists(".rsn")) rm(.rsn)
+
+# ── Most recent data request each country responded to ───────────────────────
+# Long-format RDS with columns: ref_area (country NAME, not ISO3) and
+# time_period (the year of the request round they last responded to).
+# Countries absent from the file have never responded, so their portal starts
+# unpopulated. Three names in the file differ from the labels used here, hence
+# the alias map - without it those countries would wrongly read as "no
+# response". Keyed by ISO3 so the app can look a country up directly.
+latest_request_file <- "data/latest request.RDS"
+
+.lr_aliases <- c("Slovakia" = "Slovak Republic",
+                 "South Korea" = "Korea",
+                 "Turkey" = "Türkiye")
+
+latest_request <- if (file.exists(latest_request_file)) {
+  .lr <- readRDS(latest_request_file) %>%
+    mutate(
+      ref_area = if_else(ref_area %in% names(.lr_aliases),
+                         unname(.lr_aliases[ref_area]), ref_area),
+      iso = unname(country_name_vector[match(ref_area, names(country_name_vector))]),
+      time_period = as.numeric(time_period)
+    ) %>%
+    filter(!is.na(iso)) %>%
+    # Keep the most recent round if a country appears more than once
+    arrange(iso, desc(time_period)) %>%
+    distinct(iso, .keep_all = TRUE)
+  setNames(.lr$time_period, .lr$iso)
+} else {
+  setNames(numeric(0), character(0))
+}
+
+rm(.lr_aliases)
+if (exists(".lr")) rm(.lr)
 
 # ── Last time use survey previously submitted, per country ───────────────────
 # Long-format RDS with columns: name, value, ref_area, year_used.

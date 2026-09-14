@@ -88,6 +88,54 @@ shared_head <- tagList(
       return true;
     }
 
+    // Clear every value and flag in a panel's Enter Data grid. Deliberately
+    // does NOT save: the clearance is only recorded once the user presses
+    // Submit data (the server treats a blank cell as an explicit deletion).
+    function clearAllInputs(safe_id) {
+      var container = document.getElementById('inputs_' + safe_id);
+      if (!container) return;
+      var inputs = container.querySelectorAll('.year-input');
+      var filled = 0;
+      inputs.forEach(function(inp) { if (inp.value !== '') filled++; });
+      if (filled === 0) return;
+      if (!confirm('Clear all ' + filled + ' value(s) entered for this indicator?')) return;
+      inputs.forEach(function(inp) {
+        inp.value = '';
+        inp.style.border = '1px solid #ccc';
+      });
+      container.querySelectorAll('.flag-select').forEach(function(sel) { sel.value = ''; });
+      var st = document.getElementById('status_' + safe_id);
+      if (st) {
+        st.style.color = '#888';
+        st.innerText = filled + ' value(s) cleared from the form. Nothing is saved yet - press Submit data to record the removal.';
+      }
+    }
+
+    // Revert every value/flag in a panel's Enter Data grid back to the
+    // existing OECD data (published, falling back to non-used) that was on
+    // record before the country made any entries - i.e. each field's
+    // data-default/data-default-flag, embedded when the panel was rendered.
+    // Like Clear all, this is purely client-side: nothing is saved until
+    // Submit data is pressed.
+    function revertToDefaults(safe_id) {
+      var container = document.getElementById('inputs_' + safe_id);
+      if (!container) return;
+      if (!confirm('Revert this indicator to the existing OECD data on record, discarding any values you have entered here?')) return;
+      container.querySelectorAll('.year-input').forEach(function(inp) {
+        var def = inp.dataset.default;
+        inp.value = (def === undefined) ? '' : def;
+        inp.style.border = '1px solid #ccc';
+      });
+      container.querySelectorAll('.flag-select').forEach(function(sel) {
+        sel.value = sel.dataset.defaultFlag || '';
+      });
+      var st = document.getElementById('status_' + safe_id);
+      if (st) {
+        st.style.color = '#888';
+        st.innerText = 'Reverted to the existing OECD data. Nothing is saved yet - press Submit data to record the change.';
+      }
+    }
+
     function submitMeasure(safe_id, measure) {      var container = document.getElementById('inputs_' + safe_id);
       if (!validateMeasureRanges(container, measure, safe_id)) return;
       var inputs = container.querySelectorAll('.year-input');
@@ -111,6 +159,9 @@ shared_head <- tagList(
         if (!flags[row]) flags[row] = {};
         if (sel.value !== '') flags[row][yr] = sel.value;
       });
+      // The 'Age groups differ?' note is free text, so it is sent on its own
+      // rather than through values, which is parsed as numbers.
+      var ageEl = container.querySelector('.age-note-input');
       // Also collect the Country Question Format responses from this panel
       var panel = document.getElementById('panel_' + safe_id);
       var responses = {};
@@ -121,6 +172,7 @@ shared_head <- tagList(
       }
       Shiny.setInputValue('submitted_data',
         { measure: measure, safe_id: safe_id, values: values, flags: flags, responses: responses,
+          age_note: ageEl ? ageEl.value : null,
           timestamp: new Date().toISOString() },
         {priority: 'event'});
       // Optimistic feedback: the server rebuild takes a moment, so acknowledge
@@ -149,6 +201,10 @@ shared_head <- tagList(
       markBusy(false);
     });
 
+  ")),
+  # Continued in a new <script> tag, for the same 10000-character reason
+  # noted below.
+  tags$script(HTML("
     // Collect the current state of a measure panel without client-side range
     // validation. Used by the Save and continue button so work-in-progress
     // values can be stored (and the heatmap refreshed) without the stricter
@@ -173,6 +229,7 @@ shared_head <- tagList(
         if (!flags[row]) flags[row] = {};
         if (sel.value !== '') flags[row][yr] = sel.value;
       });
+      var ageEl = container.querySelector('.age-note-input');
       var panel = document.getElementById('panel_' + safe_id);
       var responses = {};
       if (panel) {
@@ -182,6 +239,7 @@ shared_head <- tagList(
       }
       return { measure: measure, safe_id: safe_id, values: values,
                flags: flags, responses: responses,
+               age_note: ageEl ? ageEl.value : null,
                timestamp: new Date().toISOString() };
     }
 
@@ -205,8 +263,9 @@ shared_head <- tagList(
   # \\uXXXX escapes is capped at 10000 characters, and the block above is
   # already close to that limit.
   tags$script(HTML("
-    function submitTable(table_id) {
+    function collectTable(table_id) {
       var container = document.getElementById(table_id);
+      if (!container) return null;
       var rows = container.querySelectorAll('tr[data-row]');
       var data = {};
       rows.forEach(function(row) {
@@ -215,11 +274,51 @@ shared_head <- tagList(
           data[r]['c' + inp.dataset.col] = inp.value;
         });
       });
-      Shiny.setInputValue('submitted_table',
-        { table: table_id, data: data, timestamp: new Date().toISOString() },
+      return data;
+    }
+
+    // Draft save for a single time use table. Stores progress without
+    // marking the time use submission as complete.
+    function saveTable(table_id) {
+      Shiny.setInputValue('saved_table',
+        { table: table_id, data: collectTable(table_id),
+          timestamp: new Date().toISOString() },
         {priority: 'event'});
     }
 
+    // Final submission of step 3: survey details plus both tables. The
+    // survey name and year are required, so they are checked here for
+    // immediate feedback and again on the server.
+    function submitTimeUseTables() {
+      var nm = document.getElementById('tu_survey_name');
+      var yr = document.getElementById('tu_survey_year');
+      var st = document.getElementById('tu_submit_all_status');
+      var missing = [];
+      if (!nm || nm.value.trim() === '') missing.push('survey name');
+      if (!yr || yr.value.toString().trim() === '') missing.push('latest survey year');
+      if (missing.length > 0) {
+        if (st) {
+          st.style.color = '#E63312';
+          st.innerText = '\u26A0 Please fill in the ' + missing.join(' and ') + ' above before submitting.';
+        }
+        [nm, yr].forEach(function(el) {
+          if (el && el.value.toString().trim() === '') el.style.border = '2px solid #E63312';
+        });
+        if (nm && nm.value.trim() === '') nm.focus();
+        else if (yr) yr.focus();
+        return;
+      }
+      [nm, yr].forEach(function(el) { if (el) el.style.border = ''; });
+      if (st) { st.style.color = '#009EDB'; st.innerText = '\u231B Submitting\u2026'; }
+      Shiny.setInputValue('tu_submit_all',
+        { t1: collectTable('tu_table1'), t2: collectTable('tu_table2'),
+          timestamp: new Date().toISOString() },
+        {priority: 'event'});
+    }
+
+  ")),
+  # Third <script> tag, for the same 10000-character reason as above.
+  tags$script(HTML("
     function submitNote(safe_id, measure) {
       var el = document.getElementById('note_' + safe_id);
       Shiny.setInputValue('submitted_note',
@@ -596,6 +695,18 @@ login_country_choices <- list(
   "Partner countries" = as.list(.partner_choices[order(names(.partner_choices))])
 )
 
+# ── Related-resource card ─────────────────────────────────────────────────────
+# The whole card is the link, so the entire box is clickable.
+resource_card <- function(href, title, desc, star = FALSE) {
+  tags$a(
+    class = paste("wb-resource-card", if (star) "wb-resource-card-featured"),
+    href = href, target = "_blank",
+    tags$span(class = "wb-resource-card-title",
+              paste0(if (star) "\u2B50 " else "\U0001F517 ", title)),
+    tags$p(desc)
+  )
+}
+
 # ── UI ────────────────────────────────────────────────────────────────────────
 ui <- tagList(
   shared_head,
@@ -721,6 +832,7 @@ ui <- tagList(
         actionLink("logout_btn", label = NULL, icon = icon("right-from-bracket"),
                    title = "Log out")
       ),
+      uiOutput("freeze_banner"),
       navbarPage(
         title = uiOutput("nav_title", inline = TRUE),
         id    = "main_navbar",
@@ -728,157 +840,150 @@ ui <- tagList(
         # ── Tab 1: Data Submissions ────────────────────────────────────────
         tabPanel("Well-being Data Submissions",
           fluidPage(
-            fluidRow(
-              column(1),
-              column(10,
-                tags$div(class = "landing-hero",
-                  tags$div(class = "landing-logo-row",
-                    img(src = "wise_logo.png", height = 60),
-                    img(src = "OECD_logo.svg", height = 36)
-                  ),
-                  tags$p(HTML(
-                    "The purpose of this questionnaire is to gather national data on different aspects of well-being in OECD member countries to ensure they are 
-                    reflected in the OECD Well-being Database and associated products such as upcoming editions of the <a href='https://www.oecd.org/en/publications/serials/how-s-life_g1g317ee.html'>
-                    How's Life? publication series</a>,
-                    the <a href='https://www.oecd.org/en/data/tools/well-being-data-monitor.html'>OECD Well-being Data Monitor</a>
-                    and annually updated <a href=''>well-being country profiles</a>.<br><br> The OECD Well-being Database includes over 80 indicators, the majority 
-                    of which are sourced from other OECD and external international data collections. <b>To ensure a streamlined process, this questionnaire covers ONLY the 
-                    indicators that are unique to the OECD Well-being Database as well as relevant information for the OECD Time Use Database. It therefore 
-                    excludes indicators that are managed through other OECD data collection activities, or by other external international data producers.</b> All types of 
-                    offical surveys are of interest to this exercise, including (but not limited to) household surveys, health surveys, general social surveys, time-use 
-                    surveys and ad hoc surveys.
-                    <br><br>
-                    The OECD Well-being Database can be accessed <a href='http://data-explorer.oecd.org/s/fu'>here.</a><br>
-                    The OECD Time Use Database can be accessed <a href='http://data-explorer.oecd.org/s/177'>here.</a><br><br>
-                    For information about the OECD Well-being Framework, see <a href='https://www.oecd.org/wise/measuring-well-being-and-progress.htm'>here.</a><br>
-                    For metadata and definitions of all indicators covered in the OECD Well-being Database, see <a href='https://www.oecd.org/content/dam/oecd/en/topics/policy-sub-issues/measuring-well-being-and-progress/oecd-well-being-database-definitions.pdf'>here</a><br>
-                    ")
-                  )
+            tags$div(class = "wb-page",
+
+              # ── Header: who's logged in + purpose, folded into one card ──
+              tags$div(class = "landing-hero",
+                tags$div(class = "landing-logo-row",
+                  img(src = "wise_logo.png", height = 60),
+                  img(src = "OECD_logo.svg", height = 36)
+                ),
+                uiOutput("country_status"),
+                tags$p(style = "margin-bottom: 15px", HTML(
+                  "This questionnaire gathers national data on well-being in OECD member countries for the <strong>OECD Well-being Database</strong> and
+                  associated products, including the How's Life? publication series, the Well-being Data Monitor,
+                  and the annual well-being country profiles.
+                  <br><br>
+                  The database includes over 80 indicators, most sourced from other OECD and external data collections. The full set may be viewed on the Well-being Data Coverage tab.
+                  <b>To streamline the data collection process, this questionnaire covers only a subset of these indicators unique to the OECD Well-being Database, plus relevant
+                  Time Use information, and that are not managed through other OECD or external data collection activities.</b> 
+                  All official surveys are welcome as sources, including but not limited to household, health, general social, time-use, and ad hoc surveys."
+                )),
+                tags$p(class = "wb-resource-heading", "Reference material and databases"),
+                tags$div(class = "wb-resource-grid",
+                  resource_card("https://www.oecd.org/content/dam/oecd/en/topics/policy-sub-issues/measuring-well-being-and-progress/oecd-well-being-database-definitions.pdf",
+                                "OECD Well-being Metadata",
+                                "Metadata and indicators definitions for every indicator in the OECD Well-being Database.",
+                                star = TRUE),
+                  resource_card("https://www.oecd.org/wise/measuring-well-being-and-progress.htm",
+                                "The OECD's Well-being Framework",
+                                "Background on how the OECD defines and measures well-being."),
+                  resource_card("http://data-explorer.oecd.org/s/fu",
+                                "Well-being Database",
+                                "Browse and download every published well-being indicator in the OECD Data Explorer."),
+                  resource_card("http://data-explorer.oecd.org/s/177",
+                                "Time Use Database",
+                                "Browse and download published time-use indicators in the OECD Data Explorer."),
+                  resource_card("https://www.oecd.org/en/publications/serials/how-s-life_g1g317ee.html",
+                                "How's Life?",
+                                "OECD flagship publication series reporting on well-being across countries."),
+                  resource_card("https://www.oecd.org/en/data/tools/well-being-data-monitor.html",
+                                "Well-being Data Monitor",
+                                "Interactive tool for exploring well-being data across countries and indicators."),
+                  resource_card("https://github.com/wise-oecd/data_monitor/tree/main/country%20profiles",
+                                "Well-being country profiles",
+                                "Annually updated profiles summarising well-being outcomes by country.")
                 )
               ),
-              column(1)
-            ),
-            fluidRow(
-              column(1),
-              column(10,
-                tags$div(
-                  style = paste0(
-                    "background:#f0f6ff;border:1px solid #c5d7ee;border-radius:8px;",
-                    "padding:16px 22px;margin-bottom:20px;font-size:12px;color:#1F2B3A;line-height:1.6;"
-                  ),
-                  tags$p(style = "font-weight:700;margin:0 0 6px;font-size:13px;", "Quick guide"),
-                  tags$ul(style = "margin:0;padding-left:18px;",
-                    tags$li("Each indicator below is shown as a row in the heatmap. Click any indicator row to expand its panel, enter values, and press",
-                            tags$b("\u2713 Submit"), "to save. See the legend below for what each cell colour means."),
-                    tags$li("Data and responses are pre-filled with previous submissions but can be overwritten."),
-                    tags$li("Please enter the figures themselves in the portal. A link to a national database or publication is very welcome as a source, and the",
-                            tags$b("Other useful information"), "box is the perfect place for it, but we are only able to take up values that are actually submitted here. A link on its own, unfortunately, cannot be processed. If you have a lot of values to enter, the Excel template below is the quickest way to do it."),
-                    tags$li("Use", tags$b("Save and continue"), "to store your progress without marking the indicator complete; your draft will be restored when you log back in.",
-                            tags$b("Save and continue never changes the heatmap"), "- only",
-                            tags$b("\u2713 Submit"), "does. Press",
-                            tags$b("\u2713 Submit"), "when you are ready to mark the indicator complete."),
-                    tags$li("Indicators marked", tags$span(style = "font-size:9px;background:#F89C1C;color:white;border-radius:3px;padding:1px 4px;", "\u26A0 Awaiting data input"),
-                            "still need your input; those marked",
-                            tags$span(style = "font-size:9px;background:#009EDB;color:white;border-radius:3px;padding:1px 4px;", "\u231B Awaiting Time Use submission"),
-                            "turn complete once the", tags$b("Time Use"), "tab is submitted."),
-                    tags$li("When flagging data, choose the", tags$b("single most important flag"),
-                            "only. If a value genuinely needs more than one, add the additional flag in the",
-                            tags$b("Other useful information"), "box. See the",
-                            tags$a(href = "https://sdmx.org/wp-content/uploads/CL_OBS_STATUS_v2_3-for-publication.docx",
-                                   target = "_blank", "SDMX guidelines on observation status flags"), "for guidance."),
-                    tags$li("Metadata such as survey names or question wording should be provided in English where possible. If no official English translation exists, please give the official name in the original language."),
-                    tags$li("Values can be revised at any time before the submission deadline, including after you have pressed Submit, just remember to press",
-                            tags$b("\u2713 Submit"), "again to save the revision."),
-                    tags$li("Data can be entered manually, or use the optional Excel template below for bulk entry.")
-                  )
+
+              # ── Step 1: quick guide ───────────────────────────────────
+              tags$div(class = "wb-card",
+                tags$p(class = "wb-card-title",
+                       tags$span(class = "wb-step-num", "1"), "How it works"),
+                tags$ul(class = "wb-guide-list",
+                  tags$li("Each indicator below is shown as a row in the heatmap. Click any indicator row to expand its panel, enter values, and press",
+                          tags$b("\u2713 Submit"), "to save. See the legend below for what each cell colour means."),
+                  tags$li("Data and responses are pre-filled with previous submissions but can be overwritten."),
+                  tags$li("Enter figures themselves in the portal. A link to a national database or publication is welcome as a source in the",
+                          tags$b("Other useful information"), "box, but we can only take up values that are actually submitted here. A link on its own cannot be processed. If you have many values, the Excel template below is the quickest way to enter them."),
+                  tags$li("Use", tags$b("Save and continue"), "to store progress without marking an indicator complete; drafts are restored on your next login.",
+                          tags$b("Save and continue never changes the heatmap;"), "only",
+                          tags$b("\u2713 Submit"), "does."),
+                  tags$li("Indicators marked", tags$span(style = "font-size:9px;background:#F89C1C;color:white;border-radius:3px;padding:1px 4px;", "\u26A0 Awaiting data input"),
+                          "still need your input; those marked",
+                          tags$span(style = "font-size:9px;background:#009EDB;color:white;border-radius:3px;padding:1px 4px;", "\u231B Awaiting Time Use submission"),
+                          "turn complete once the", tags$b("Time Use"), "tab is submitted."),
+                  tags$li("When flagging data, choose the", tags$b("single most important flag"),
+                          "only; add any additional flag as text in the", tags$b("Other useful information"), "box. See the",
+                          tags$a(href = "https://sdmx.org/wp-content/uploads/CL_OBS_STATUS_v2_3-for-publication.docx",
+                                 target = "_blank", "SDMX observation status guidelines"), "for reference."),
+                  tags$li("Provide metadata such as survey names or question wording in English where possible, or the official name in the original language if no translation exists."),
+                  tags$li("Values can be revised any time before the deadline, including after pressing Submit; just press",
+                          tags$b("\u2713 Submit"), "again to save the revision."),
+                  tags$li("Data can be entered manually, or in bulk using the optional Excel template below.")
                 )
               ),
-              column(1)
-            ),
-            # ── Bulk upload / download row ──────────────────────────────
-            fluidRow(
-              column(1),
-              column(10,
+
+              # ── Step 2: bulk upload / download ────────────────────────
+              tags$div(class = "wb-card", style = "text-align:center;",
+                # Clickable header (always visible)
                 tags$div(
-                  style = paste0(
-                    "background:#fafbfc;border:1px solid #e8eaee;border-radius:8px;",
-                    "margin:0 auto 20px;max-width:860px;text-align:center;"
+                  onclick = "var body=document.getElementById('template_body'); var arrow=document.getElementById('template_arrow'); if(body.style.display==='none'){body.style.display='block';arrow.textContent='\\u25B2';}else{body.style.display='none';arrow.textContent='\\u25BC';}",
+                  style = "cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;",
+                  tags$p(class = "wb-card-title", style = "margin:0;",
+                         tags$span(class = "wb-step-num", "2"), "Bulk data entry (optional)"),
+                  tags$span(id = "template_arrow",
+                    style = "font-size:10px;color:#8a9bae;",
+                    "\u25BC"
+                  )
+                ),
+                # Collapsible body (hidden by default)
+                tags$div(
+                  id = "template_body",
+                  style = "display:none;padding-top:14px;",
+                  tags$p(
+                    style = "font-size:11px;color:#55606B;margin:0 0 6px;line-height:1.5;",
+                    "This template is meant to help speed up data entry for this portal. It is not an alternative to filling out the portal, and there is no need to send it to us separately.", br(),
+                    "It is particularly useful when you have many values to enter, wish to populate the portal programmatically, or copy directly from existing tables. You can also use it to keep a record of the data you submit."
                   ),
-                  # Clickable header (always visible)
                   tags$div(
-                    onclick = "var body=document.getElementById('template_body'); var arrow=document.getElementById('template_arrow'); if(body.style.display==='none'){body.style.display='block';arrow.textContent='\\u25B2';}else{body.style.display='none';arrow.textContent='\\u25BC';}",
-                    style = paste0(
-                      "padding:12px 22px;cursor:pointer;display:flex;align-items:center;",
-                      "justify-content:center;gap:8px;"
-                    ),
-                    tags$span(
-                      style = "font-size:12px;font-weight:600;color:#55606B;",
-                      "Excel template for bulk data entry (optional)"
-                    ),
-                    tags$span(id = "template_arrow",
-                      style = "font-size:10px;color:#8a9bae;",
-                      "\u25BC"
+                    style = "text-align:left;font-size:11px;color:#55606B;margin:0 0 12px;line-height:1.6;max-width:760px;margin-left:auto;margin-right:auto;",
+                    tags$p(style = "font-weight:600;margin:0 0 3px;color:#1F2B3A;font-size:11px;", "How to use:"),
+                    tags$ol(style = "margin:0;padding-left:18px;",
+                      tags$li("Click ", tags$b("Download template"), " to get an Excel file tailored to your country."),
+                      tags$li("Each sheet corresponds to one indicator. Enter numeric values in the year columns (2004 onwards). Leave cells blank where no data is available."),
+                      tags$li("Do not modify the ", tags$code("breakdown_key"), " column (column A). This is used to match your data to the correct breakdown rows in the portal."),
+                      tags$li("Save the file and click ", tags$b("Upload completed template"), " to auto-fill the portal fields."),
+                      tags$li("You can review and adjust any values in the portal after uploading. Data flags can also be set in the portal.")
                     )
                   ),
-                  # Collapsible body (hidden by default)
                   tags$div(
-                    id = "template_body",
-                    style = "display:none;padding:0 22px 16px;",
-                    tags$p(
-                      style = "font-size:11px;color:#55606B;margin:0 0 6px;line-height:1.5;",
-                      "This template is only meant to help you fill in the portal. There is no need to send it to us separately.",
-                      "It is particularly useful when you have many values to enter, wish to populate the portal programmatically, or copy directly from existing tables."
-                    ),
-                    tags$div(
-                      style = "text-align:left;font-size:11px;color:#55606B;margin:0 0 12px;line-height:1.6;",
-                      tags$p(style = "font-weight:600;margin:0 0 3px;color:#1F2B3A;font-size:11px;", "How to use:"),
-                      tags$ol(style = "margin:0;padding-left:18px;",
-                        tags$li("Click ", tags$b("Download template"), " to get an Excel file tailored to your country."),
-                        tags$li("Each sheet corresponds to one indicator. Enter numeric values in the year columns (2004 onwards). Leave cells blank where no data is available."),
-                        tags$li("Do not modify the ", tags$code("breakdown_key"), " column (column A). This is used to match your data to the correct breakdown rows in the portal."),
-                        tags$li("Save the file and click ", tags$b("Upload completed template"), " to auto-fill the portal fields."),
-                        tags$li("You can review and adjust any values in the portal after uploading. Data flags can also be set in the portal.")
-                      )
-                    ),
-                    tags$div(
-                      style = "display:flex;align-items:center;justify-content:center;gap:16px;",
-                      downloadButton("dl_wb_template", "Download template",
-                        style = paste0(
-                          "background:#8a9bae;color:white;border:none;padding:8px 20px;border-radius:5px;",
-                          "font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;",
-                          "line-height:1;height:34px;box-sizing:border-box;vertical-align:middle;"
-                        )),
-                      tags$div(
-                        class = "upload-btn-wrap",
-                        fileInput("upload_wb_file", label = NULL, accept = ".xlsx",
-                                  buttonLabel = tagList(icon("upload"), "Upload completed template"),
-                                  placeholder = "No file selected",
-                                  width = "auto")
-                      )
-                    ),
-                    # Upload feedback sits on its own line beneath the buttons
-                    tags$div(
-                      id = "upload_wb_status",
+                    style = "display:flex;align-items:center;justify-content:center;gap:16px;",
+                    downloadButton("dl_wb_template", "Download template",
                       style = paste0(
-                        "display:none;margin:12px auto 0;max-width:780px;text-align:left;",
-                        "font-size:11px;font-weight:600;line-height:1.5;word-break:break-word;",
-                        "padding:8px 12px;border-radius:6px;background:#f2f7f4;border:1px solid #d7e5dd;"
-                      )
+                        "background:#8a9bae;color:white;border:none;padding:8px 20px;border-radius:5px;",
+                        "font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;",
+                        "line-height:1;height:34px;box-sizing:border-box;vertical-align:middle;"
+                      )),
+                    tags$div(
+                      class = "upload-btn-wrap",
+                      fileInput("upload_wb_file", label = NULL, accept = ".xlsx",
+                                buttonLabel = tagList(icon("upload"), "Upload completed template"),
+                                placeholder = "No file selected",
+                                width = "auto")
+                    )
+                  ),
+                  # Upload feedback sits on its own line beneath the buttons
+                  tags$div(
+                    id = "upload_wb_status",
+                    style = paste0(
+                      "display:none;margin:12px auto 0;max-width:780px;text-align:left;",
+                      "font-size:11px;font-weight:600;line-height:1.5;word-break:break-word;",
+                      "padding:8px 12px;border-radius:6px;background:#f2f7f4;border:1px solid #d7e5dd;"
                     )
                   )
                 )
               ),
-              column(1)
-            ),
-            fluidRow(
-              column(1),
-              column(10, align = "center",
-                tags$div(class = "heatmap-content",
+
+              # ── Step 3: the data itself ────────────────────────────────
+              tags$div(class = "wb-card wb-card-wide",
+                tags$p(class = "wb-card-title",
+                       tags$span(class = "wb-step-num", "3"), "Enter your data"),
+                tags$div(class = "heatmap-content", style = "text-align:center;",
                   heatmap_legend,
                   shinycssloaders::withSpinner(uiOutput("heatmap_submissions"))
                 )
-              ),
-              column(1)
+              )
             )
           )
         ),
@@ -886,118 +991,133 @@ ui <- tagList(
         # ── Tab 3: Time Use ────────────────────────────────────────────────
         tabPanel("Time Use Data Submissions",
           fluidPage(
-            fluidRow(
-              column(1),
-              column(10,
-                tags$div(class = "landing-hero",
-                  tags$div(class = "landing-logo-row",
-                    img(src = "wise_logo.png", height = 60),
-                    img(src = "OECD_logo.svg", height = 36)
-                  ),
-                  tags$p(HTML(
-                    "This section collects detailed time use data from national time use surveys.
-                    Table 1 gathers time spent on daily activities (in minutes per day), while
-                    Table 2 asks you to map your national activity codes to the OECD classification."
-                  ))
-                )
-              ),
-              column(1)
-            ),
-            fluidRow(
-              column(1),
-              column(10,
-                tags$div(
-                  style = paste0(
-                    "background:#f0f6ff;border:1px solid #c5d7ee;border-radius:8px;",
-                    "padding:16px 22px;margin-bottom:20px;font-size:12px;color:#1F2B3A;line-height:1.6;"
-                  ),
-                  tags$p(style = "font-weight:700;margin:0 0 6px;font-size:13px;", "Quick guide"),
-                  tags$ul(style = "margin:0;padding-left:18px;",
-                    tags$li("Table 1 collects time spent on daily activities in",
-                            tags$b("minutes per day"), "for the total population (15\u201364), men, and women."),
-                    tags$li("Group subtotals and the grand total are",
-                            tags$b("calculated automatically"), "from the values you enter."),
-                    tags$li("Subtotal rows (e.g. 2.3 Care for household members) are",
-                            tags$b("auto-summed"), "from their sub-categories (2.3.1 + 2.3.2)."),
-                    tags$li("The daily total should sum to",
-                            tags$b("1440 minutes"), "(24 hours). If it differs, you will be asked to provide a brief explanation."),
-                    tags$li("Table 2 asks you to map your national activity codes to each OECD activity category."),
-                    tags$li("Click", tags$b("\u2713 Submit table"), "to save each table separately.",
-                            "Your progress is", tags$b("auto-saved"), "and restored on your next login."),
-                    tags$li("Metadata such as survey names or question wording should be provided in English where possible. If no official English translation exists, please give the official name in the original language."),
-                    tags$li("Values can be revised at any time before the submission deadline, including after you have pressed Submit; just remember to press",
-                            tags$b("\u2713 Submit table"), "again to save the revision."),
-                    tags$li("Data can be entered manually or uploaded using the Paste from spreadsheet feature.")
+            tags$div(class = "wb-page",
 
-                  )
+              # ── Header: who's logged in + purpose, folded into one card ──
+              tags$div(class = "landing-hero",
+                tags$div(class = "landing-logo-row",
+                  img(src = "wise_logo.png", height = 60),
+                  img(src = "OECD_logo.svg", height = 36)
+                ),
+                uiOutput("tu_country_status"),
+                tags$p(HTML(
+                  "This section collects detailed time use data from national time use surveys, for the OECD Time Use
+                  Database and related well-being products. Table 1 gathers time spent on daily activities
+                  (in minutes per day); Table 2 asks you to map your national activity codes to the OECD classification."
+                )),
+                tags$p(class = "wb-resource-heading", "Reference material and databases"),
+                tags$div(class = "wb-resource-grid",
+                  resource_card("http://data-explorer.oecd.org/s/177",
+                                "Time Use Database",
+                                "Browse and download published time-use indicators in the OECD Data Explorer."),
+                  resource_card("https://www.oecd.org/en/data/datasets/time-use-database.html",
+                                "Time Use Database (dataset page)",
+                                "Download a more detailed breakdown of daily activities."),
+                  resource_card("http://data-explorer.oecd.org/s/fu",
+                                "Well-being Database",
+                                "Time use indicators also feed into the OECD Well-being Database and How's Life? reporting.")
                 )
               ),
-              column(1)
-            ),
-            fluidRow(
-              column(1),
-              column(10,
-                uiOutput("tu_last_survey_box"),
-                # ── Survey details: name, year and free-text notes ───────────
-                # Everything here is auto-saved as it is typed; the button is
-                # a visible confirmation, not a requirement.
-                tags$div(
-                  style = paste0(
-                    "background:#fafbfc;border:1px solid #e8eaee;border-radius:8px;",
-                    "padding:16px 18px;margin-bottom:18px;"
+
+              # ── Step 1: quick guide ───────────────────────────────────
+              tags$div(class = "wb-card",
+                tags$p(class = "wb-card-title",
+                       tags$span(class = "wb-step-num", "1"), "How it works"),
+                tags$ul(class = "wb-guide-list",
+                  tags$li("Table 1 collects time spent on daily activities in",
+                          tags$b("minutes per day"), "for the total population (15\u201364), men, and women."),
+                  tags$li("Group subtotals and the grand total are",
+                          tags$b("calculated automatically"), "from the values you enter."),
+                  tags$li("Subtotal rows (e.g. 2.3 Care for household members) are",
+                          tags$b("auto-summed"), "from their sub-categories (2.3.1 + 2.3.2)."),
+                  tags$li("The daily total should sum to",
+                          tags$b("1440 minutes"), "(24 hours). If it differs, you will be asked to provide a brief explanation."),
+                  tags$li("Table 2 asks you to map your national activity codes to each OECD activity category."),
+                  tags$li("Survey details, Table 1 and Table 2 are all part of", tags$b("step 3"),
+                          "and are submitted together. Use", tags$b("Save and continue"),
+                          "under each table to store progress as you work; nothing is submitted until you press",
+                          tags$b("\u2713 Submit time use tables"), "at the end of step 3."),
+                  tags$li("The survey name and latest survey year are", tags$b("required"),
+                          "before the tables can be submitted."),
+                  tags$li("Provide metadata such as survey names or question wording in English where possible, or the official name in the original language if no translation exists."),
+                  tags$li("Values can be revised any time before the submission deadline, including after submitting; just remember to press",
+                          tags$b("\u2713 Submit time use tables"), "again to save the revision."),
+                  tags$li("Data can be entered manually or uploaded using the Paste from spreadsheet feature.")
+                )
+              ),
+
+              # ── Step 2: latest survey on record ────────────────────────
+              tags$div(class = "wb-card",
+                tags$p(class = "wb-card-title",
+                       tags$span(class = "wb-step-num", "2"), "Your time use survey on record"),
+                uiOutput("tu_last_survey_box")
+              ),
+
+              # ── Step 3: survey details + both tables, submitted together ──
+              tags$div(class = "wb-card wb-card-wide",
+                tags$p(class = "wb-card-title",
+                       tags$span(class = "wb-step-num", "3"),
+                       "Your survey details and time use tables"),
+                tags$p(style = "font-size:12px;color:#55606B;margin:0 0 14px;line-height:1.5;",
+                       "The survey details and both tables below form a single submission. ",
+                       "Use ", tags$b("Save and continue"), " under each table to store progress, then press ",
+                       tags$b("\u2713 Submit time use tables"), " at the bottom to submit everything together."),
+
+                # ── 3a. Survey details ──────────────────────────────────
+                tags$p(class = "tu-subhead", "Survey details"),
+                # Everything here is auto-saved as it is typed; the final
+                # submit button below requires the name and year.
+                fluidRow(
+                  column(6,
+                    tags$label("Survey name",
+                               style = "font-size:13px;font-weight:600;display:block;margin-bottom:4px;"),
+                    textInput("tu_survey_name", label = NULL,
+                              placeholder = "e.g. Time Use Survey 2024", width = "100%")
                   ),
-                  tags$p(style = "font-weight:700;margin:0 0 12px;font-size:12px;color:#003189;",
-                         "Your latest time use survey"),
-                  fluidRow(
-                    column(6,
-                      tags$label("Survey name",
-                                 style = "font-size:13px;font-weight:600;display:block;margin-bottom:4px;"),
-                      textInput("tu_survey_name", label = NULL,
-                                placeholder = "e.g. Time Use Survey 2024", width = "100%")
-                    ),
-                    column(3,
-                      tags$label("Latest survey year",
-                                 style = "font-size:13px;font-weight:600;display:block;margin-bottom:4px;"),
-                      numericInput("tu_survey_year", label = NULL,
-                                   value = NA, min = 1990, max = 2035, width = "100%")
-                    )
-                  ),
-                  tags$label("Additional information or notes on your time use survey",
-                             style = "font-size:13px;font-weight:600;display:block;margin-bottom:2px;"),
-                  tags$p(style = "font-size:11px;color:#888;margin:0 0 6px;line-height:1.5;",
-                         "Optional. Anything that helps us interpret your figures, for example ",
-                         "changes in methodology since the last survey, population coverage, sample ",
-                         "size, how your national activity categories map onto the OECD ones, or why ",
-                         "particular rows are left blank."),
-                  textAreaInput("tu_notes", label = NULL, value = "", width = "100%",
-                                rows = 4,
-                                placeholder = "Notes on methodology, coverage, definitions\u2026"),
-                  tags$div(
-                    style = "display:flex;align-items:center;gap:8px;margin-top:-6px;",
-                    tags$span(style = "font-size:11px;color:#8a9bae;",
-                              "Saved automatically as you type and restored next time you log in."),
-                    tags$span(style = "font-size:11px;color:#1F7A4D;font-weight:600;",
-                              textOutput("tu_meta_status", inline = TRUE))
+                  column(3,
+                    tags$label("Latest survey year",
+                               style = "font-size:13px;font-weight:600;display:block;margin-bottom:4px;"),
+                    numericInput("tu_survey_year", label = NULL,
+                                 value = NA, min = 1990, max = 2035, width = "100%")
                   )
                 ),
-                br(),
-                h4(HTML("Table 1. Time spent on daily activities (<u>minutes per day</u>)")),
+                tags$label("Additional information or notes on your time use survey",
+                           style = "font-size:13px;font-weight:600;display:block;margin-bottom:2px;"),
+                tags$p(style = "font-size:11px;color:#888;margin:0 0 6px;line-height:1.5;",
+                       "Optional. Anything that helps us interpret your figures, for example ",
+                       "changes in methodology since the last survey, population coverage, sample ",
+                       "size, how your national activity categories map onto the OECD ones, or why ",
+                       "particular rows are left blank."),
+                textAreaInput("tu_notes", label = NULL, value = "", width = "100%",
+                              rows = 4,
+                              placeholder = "Notes on methodology, coverage, definitions\u2026"),
                 tags$div(
-                  style = "display:flex;align-items:center;gap:12px;margin:-4px 0 8px;",
-                  tags$p(style = "font-size:11px;color:#888;margin:0;",
-                         "Blue-highlighted rows are calculated automatically. Enter values in the white rows only."),
+                  style = "display:flex;align-items:center;gap:8px;margin-top:-6px;",
+                  tags$span(style = "font-size:11px;color:#8a9bae;",
+                            "Saved automatically as you type and restored next time you log in."),
+                  tags$span(style = "font-size:11px;color:#1F7A4D;font-weight:600;",
+                            textOutput("tu_meta_status", inline = TRUE))
+                ),
+
+                # ── 3b. Table 1 ─────────────────────────────────────────
+                tags$div(
+                  style = "display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:22px 0 2px;",
+                  tags$p(class = "tu-subhead", style = "margin:0;",
+                         HTML("Table 1. Time spent on daily activities (<u>minutes per day</u>)")),
                   tags$button(
                     onclick = "openPasteModal('tu_table1', 2, 5)",
                     style = "background:#f5f5f5;color:#555;border:1px solid #ccc;padding:5px 12px;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;",
                     "\U0001F4CB Paste from spreadsheet"
                   )
                 ),
+                tags$p(style = "font-size:11px;color:#888;margin:0 0 8px;",
+                       "Blue-highlighted rows are calculated automatically. Enter values in the white rows only."),
                 uiOutput("time_use_table1_ui"),
                 tags$div(
                   id = "tu1_1440_warning",
                   style = paste0(
                     "display:none;background:#FFF8E1;border:1px solid #F5C518;border-radius:8px;",
-                    "padding:14px 18px;margin-top:12px;margin-bottom:16px;"
+                    "padding:14px 18px;margin-top:12px;margin-bottom:0;"
                   ),
                   tags$div(
                     style = "display:flex;align-items:center;gap:8px;margin-bottom:8px;",
@@ -1011,19 +1131,37 @@ ui <- tagList(
                   textAreaInput("tu1_explanation", label = NULL, value = "", width = "100%",
                                 rows = 2, placeholder = "Explain why the total differs from 1440 minutes\u2026")
                 ),
-                br(), br(),
+
+                # ── 3c. Table 2 ─────────────────────────────────────────
                 tags$div(
-                  style = "display:flex;align-items:center;gap:12px;margin-bottom:8px;",
-                  h4(style = "margin:0;", "Table 2. Considering the activity coding list in the national time-use survey, please indicate which \nactivity codes are grouped under each activity (e.g. 1.1. paid work)."),
+                  style = "display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:26px 0 8px;",
+                  tags$p(class = "tu-subhead", style = "margin:0;",
+                         "Table 2. Considering the activity coding list in the national time-use survey, please indicate which activity codes are grouped under each activity (e.g. 1.1. paid work)."),
                   tags$button(
                     onclick = "openPasteModal('tu_table2', 2, 3)",
                     style = "background:#f5f5f5;color:#555;border:1px solid #ccc;padding:5px 12px;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;",
                     "\U0001F4CB Paste from spreadsheet"
                   )
                 ),
-                uiOutput("time_use_table2_ui")
-              ),
-              column(1)
+                uiOutput("time_use_table2_ui"),
+
+                # ── 3d. Final submission of the whole of step 3 ─────────
+                tags$div(
+                  style = paste0("margin-top:22px;padding-top:16px;border-top:1px solid #e6e9ee;",
+                                 "display:flex;align-items:center;gap:12px;flex-wrap:wrap;"),
+                  tags$button(
+                    id = "tu_submit_all_btn",
+                    onclick = "submitTimeUseTables()",
+                    style = paste0("background:#003189;color:white;border:none;padding:9px 20px;",
+                                   "border-radius:5px;cursor:pointer;font-size:13px;font-weight:700;"),
+                    "\u2713 Submit time use tables"
+                  ),
+                  tags$span(id = "tu_submit_all_status",
+                            style = "font-size:12px;font-weight:600;color:#1F7A4D;"),
+                  tags$span(style = "font-size:11px;color:#8a9bae;",
+                            "Submits the survey details and both tables together.")
+                )
+              )
             )
           )
         ),
@@ -1213,6 +1351,8 @@ ui <- tagList(
                                style = "width:100%;")
               )
             ),
+            # ── Per-country freeze / last-activity controls ────────────
+            uiOutput("admin_country_controls"),
             DT::dataTableOutput("admin_data_table"),
             tags$hr(style = "margin:30px 0 20px;border-color:#eee;"),
             # ── Bulk backup / restore of every country session ──────────
@@ -1265,6 +1405,62 @@ ui <- tagList(
 # ── Server ────────────────────────────────────────────────────────────────────
 server <- function(input, output, session) {
 
+  # ── Breakdown/flag lookup constants ─────────────────────────────────────────
+  # Shared between the panel/heatmap builder below and store_measure() (used
+  # to detect when a submission reverts a cell back to its existing/published
+  # value), so both stay in sync with a single definition.
+  breakdown_filters <- list(
+    country_avg = list(sex = "_T", age = "_T", edu = "_T"),
+    male        = list(sex = "M",  age = "_T", edu = "_T"),
+    female      = list(sex = "F",  age = "_T", edu = "_T"),
+    young       = list(sex = "_T", age = "YOUNG", edu = "_T"),
+    middle_aged = list(sex = "_T", age = "MID",   edu = "_T"),
+    old         = list(sex = "_T", age = "OLD",   edu = "_T"),
+    primary     = list(sex = "_T", age = "_T", edu = "ISCED11_1"),
+    secondary   = list(sex = "_T", age = "_T", edu = "ISCED11_2_3"),
+    tertiary    = list(sex = "_T", age = "_T", edu = "ISCED11_5T8")
+  )
+  # vert/dep use separate measures with _VER/_DEP suffix
+  dep_vert_keys  <- c("vert", "dep")
+  # obs_status -> flag mapping (A = normal, W = not a standard flag)
+  status_to_flag <- c(B = "B", D = "D", E = "E", P = "P", U = "U")
+
+  # Existing OECD figure for one breakdown/year of a measure: published data,
+  # falling back to non-used data, exactly as shown by "Revert to default" and
+  # by the input panels themselves. Returns list(value = num/NA, flag = chr).
+  lookup_default_obs <- function(measure, bk, yr, d = NULL, iso = NULL) {
+    none <- list(value = NA_real_, flag = "")
+    if (is.null(d)) d <- isolate(dat_rv())
+    if (is.null(d)) return(none)
+    if (bk %in% dep_vert_keys) {
+      meas <- paste0(measure, if (bk == "vert") "_VER" else "_DEP")
+      sx <- "_T"; ag <- "_T"; ed <- "_T"
+    } else if (!is.null(breakdown_filters[[bk]])) {
+      bf <- breakdown_filters[[bk]]
+      meas <- measure; sx <- bf$sex; ag <- bf$age; ed <- bf$edu
+    } else return(none)
+    yr_num <- suppressWarnings(as.numeric(yr))
+
+    pub <- d[d$measure == meas & d$sex == sx & d$age == ag &
+             d$education_lev == ed & as.numeric(d$time_period) == yr_num, ]
+    if (nrow(pub) > 0 && !is.na(pub$obs_value[1])) {
+      flag <- if ("obs_status" %in% names(pub) && !is.na(pub$obs_status[1]) &&
+                  pub$obs_status[1] %in% names(status_to_flag)) {
+        unname(status_to_flag[pub$obs_status[1]])
+      } else ""
+      return(list(value = pub$obs_value[1], flag = flag))
+    }
+    if (is.null(iso)) iso <- isolate(credentials$country)
+    nu <- nonused_dat[nonused_dat$ref_area == iso & nonused_dat$measure == meas &
+                       nonused_dat$sex == sx & nonused_dat$age == ag &
+                       nonused_dat$education_lev == ed &
+                       as.numeric(nonused_dat$time_period) == yr_num, ]
+    if (nrow(nu) > 0 && !is.na(nu$obs_value[1])) {
+      return(list(value = nu$obs_value[1], flag = ""))
+    }
+    none
+  }
+
   # ── Authentication ──────────────────────────────────────────────────────────
   credentials <- reactiveValues(authenticated = FALSE, country = NULL, country_name = NULL)
   # Snapshot of entries as of the last explicit Submit, "Save and continue",
@@ -1285,15 +1481,54 @@ server <- function(input, output, session) {
   bump_ui <- function() ui_refresh(isolate(ui_refresh()) + 1)
   dat_rv      <- reactiveVal(NULL)
 
+  # Prominent header on the submissions tab: which country is logged in, the
+  # most recent request round they responded to, and what that means for the
+  # indicators below (pre-populated vs starting empty).
+  output$country_status <- renderUI({
+    req(credentials$authenticated)
+    iso <- credentials$country
+    yr  <- if (iso %in% names(latest_request)) latest_request[[iso]] else NULL
+    responded <- !is.null(yr) && !is.na(yr)
+
+    tags$div(class = "wb-status-row",
+      tags$div(
+        style = "display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;",
+        tags$span(style = "font-size:22px;font-weight:700;color:#1F2B3A;",
+                  paste0("Welcome, ", credentials$country_name)),
+        if (responded) {
+          tags$span(
+            style = paste0("font-size:11px;font-weight:600;background:#e8f1fb;color:#003189;",
+                           "border:1px solid #c5d7ee;border-radius:12px;padding:2px 10px;"),
+            paste0("Last responded: ", yr, " data request")
+          )
+        } else {
+          tags$span(
+            style = paste0("font-size:11px;font-weight:600;background:#FFF8E1;color:#8a6d1a;",
+                           "border:1px solid #F5C518;border-radius:12px;padding:2px 10px;"),
+            "No previous response on record"
+          )
+        }
+      ),
+      tags$p(
+        style = "font-size:12.5px;color:#55606B;margin:8px 0 0;line-height:1.5;",
+        if (responded) {
+          paste0("The indicators and metadata below are pre-populated with the values ", credentials$country_name,
+                 " provided in the ", yr, " data request for this questionnaire. Existing figures can be ",
+                 "overwritten where you have newer or revised data.")
+        } else {
+          paste0("We have no previous response from ", credentials$country_name,
+                 " on record, so the indicators below start unpopulated. Please enter ",
+                 "values wherever data are available.")
+        }
+      )
+    )
+  })
+
   output$nav_title <- renderUI({
-    if (!credentials$authenticated) return(tags$span("OECD Well-being Questionnaire Portal"))
+    if (!credentials$authenticated) return(tags$span("OECD Well-being and Time Use Questionnaire Portal"))
     tags$span(
       style = "color:#ffffff !important;",
-      "OECD Well-being Questionnaire Portal",
-      tags$span(
-        style = "font-size:13px;font-weight:500;color:#ffffff !important;background:rgba(255,255,255,0.22);padding:3px 12px;border-radius:12px;margin-left:14px;",
-        credentials$country_name
-      )
+      "OECD Well-being and Time Use Questionnaire Portal"
     )
   })
 
@@ -1309,10 +1544,10 @@ server <- function(input, output, session) {
         return()
       }
       admin_auth(TRUE)
-      # Populate country filter
-      rds_files <- list.files("sessions", pattern = "^[A-Z]{3}\\.rds$", full.names = FALSE)
-      isos      <- sub("\\.rds$", "", rds_files)
-      names(isos) <- names(country_name_vector)[match(isos, country_name_vector)]
+      # Populate country filter with every known country, not just those that
+      # have logged in before, so a submission can be frozen pre-emptively.
+      isos <- unname(country_name_vector)
+      names(isos) <- names(country_name_vector)
       choices <- c("All countries" = "ALL", isos[order(names(isos))])
       updateSelectInput(session, "admin_country_filter", choices = choices)
 
@@ -1329,8 +1564,7 @@ server <- function(input, output, session) {
       )
       return()
     }
-    pw_file   <- file.path("sessions", "passwords.rds")
-    pw_store  <- if (file.exists(pw_file)) tryCatch(readRDS(pw_file), error = function(e) list()) else list()
+    pw_store  <- session_read("passwords") %||% list()
     valid_pw  <- pw_store[[input$login_country]] %||% "oecd2026"
     if (input$login_password != valid_pw) {
       output$login_error <- renderUI(
@@ -1352,15 +1586,14 @@ server <- function(input, output, session) {
     dat_rv(dat %>% filter(ref_area == iso))
 
     # Auto-load country session if exists
-    path <- file.path("sessions", paste0(iso, ".rds"))
-    if (file.exists(path)) {
-      loaded <- tryCatch(readRDS(path), error = function(e) NULL)
-      if (!is.null(loaded)) {
+    loaded <- session_read(iso)
+    if (!is.null(loaded)) {
         session_data$entries    <- loaded$entries    %||% list()
         session_data$notes      <- loaded$notes      %||% list()
         session_data$responses  <- loaded$responses  %||% list()
         session_data$no_updates <- loaded$no_updates %||% list()
         session_data$flags      <- loaded$flags      %||% list()
+        session_data$age_notes  <- loaded$age_notes  %||% list()
         session_data$revisions  <- loaded$revisions  %||% list()
         # explicit_submit tracks which measures were actually confirmed via
         # the Submit button (as opposed to merely uploaded or draft-saved).
@@ -1384,10 +1617,15 @@ server <- function(input, output, session) {
         bump_ui()
         session_data$time_use_1   <- loaded$time_use_1
         session_data$time_use_2   <- loaded$time_use_2
+        session_data$tu_draft_1   <- loaded$tu_draft_1 %||% loaded$time_use_1
+        session_data$tu_draft_2   <- loaded$tu_draft_2 %||% loaded$time_use_2
         session_data$tu_no_update <- loaded$tu_no_update %||% FALSE
         # Restoring this keeps the record-copy bar (and hides the submit bar)
         # for a country that has already finalised.
         session_data$finalized    <- loaded$finalized
+        session_data$frozen       <- isTRUE(loaded$frozen)
+        session_data$frozen_at    <- loaded$frozen_at
+        session_data$last_edited  <- loaded$last_edited
         # Survey metadata: prefer the tu_meta list, falling back to the older
         # top-level fields for sessions saved before tu_meta existed.
         meta <- loaded$tu_meta
@@ -1403,8 +1641,12 @@ server <- function(input, output, session) {
         updateTextAreaInput(session, "tu_notes", value = meta$notes %||% "")
         if (!is.null(loaded$tu1_explanation) && nzchar(loaded$tu1_explanation))
           updateTextAreaInput(session, "tu1_explanation", value = loaded$tu1_explanation)
-      }
     }
+
+    # The block above just repopulated entries/notes/.../tu_meta from disk,
+    # which will fire the auto-save observer once; don't let that look like
+    # a fresh edit.
+    suppress_edit_stamp(TRUE)
 
     shinyjs::hide("login_screen")
     shinyjs::show("main_app")
@@ -1470,8 +1712,7 @@ server <- function(input, output, session) {
     req(credentials$authenticated, credentials$country)
     iso <- credentials$country
 
-    pw_file  <- file.path("sessions", "passwords.rds")
-    pw_store <- if (file.exists(pw_file)) tryCatch(readRDS(pw_file), error = function(e) list()) else list()
+    pw_store <- session_read("passwords") %||% list()
     current  <- pw_store[[iso]] %||% "oecd2026"
 
     if (!identical(input$pw_current, current)) {
@@ -1490,9 +1731,8 @@ server <- function(input, output, session) {
       return()
     }
 
-    dir.create("sessions", showWarnings = FALSE)
     pw_store[[iso]] <- input$pw_new
-    saveRDS(pw_store, pw_file)
+    session_write(pw_store, "passwords")
     output$change_pw_msg <- renderUI(
       tags$p(style = "color:#1F7A4D;font-size:11px;margin:4px 0 0;", "\u2713 Password updated successfully."))
     Sys.sleep(1.5)
@@ -1505,6 +1745,8 @@ server <- function(input, output, session) {
     responses    = list(),
     no_updates   = list(),
     flags        = list(),
+    # age_notes[[measure]] = free-text answer to "Age groups differ?"
+    age_notes    = list(),
     # revisions[[measure]][[breakdown_key]][[year]] = list of
     # list(from, to, at) records, appended each time a non-empty value is
     # overwritten with a different (or blank) value during a session.
@@ -1517,6 +1759,11 @@ server <- function(input, output, session) {
     explicit_submit = list(),
     time_use_1   = NULL,
     time_use_2   = NULL,
+    # Drafts written by "Save and continue" on each time use table. Kept
+    # apart from time_use_1/2 so that unfinished work is restored on the
+    # next login without counting as a submission.
+    tu_draft_1   = NULL,
+    tu_draft_2   = NULL,
     tu_no_update   = FALSE,
     tu_no_update_1 = FALSE,
     tu_no_update_2 = FALSE,
@@ -1524,8 +1771,23 @@ server <- function(input, output, session) {
     # session_data (rather than read off the inputs only at save time) so that
     # editing it triggers the auto-save like any other piece of data.
     tu_meta        = list(),
-    finalized      = NULL
+    finalized      = NULL,
+    # Set by an admin from the Admin panel once a country has told us its
+    # submission is complete. While TRUE, every mutating observer below
+    # refuses to record further changes and the UI is shown read-only.
+    frozen         = FALSE,
+    frozen_at      = NULL,
+    # Timestamp of the most recent change to entries/notes/responses/flags/
+    # time-use tables/survey metadata, refreshed by the auto-save observer.
+    # Purely informational (shown to admins); not used to gate anything.
+    last_edited    = NULL
   )
+
+  # Skips the *next* auto-save stamp of last_edited. Set right after a
+  # country's data is restored at login, so simply logging in (which touches
+  # every tracked field once as it is populated) is never mistaken for the
+  # country having just edited something.
+  suppress_edit_stamp <- reactiveVal(FALSE)
 
   # ── Wipe every trace of the current country's instance ──────────────────────
   # Called on logout AND immediately before a new country's session is loaded,
@@ -1537,15 +1799,21 @@ server <- function(input, output, session) {
     session_data$responses       <- list()
     session_data$no_updates      <- list()
     session_data$flags           <- list()
+    session_data$age_notes       <- list()
     session_data$revisions       <- list()
     session_data$explicit_submit <- list()
     session_data$time_use_1      <- NULL
     session_data$time_use_2      <- NULL
+    session_data$tu_draft_1      <- NULL
+    session_data$tu_draft_2      <- NULL
     session_data$tu_no_update    <- FALSE
     session_data$tu_no_update_1  <- FALSE
     session_data$tu_no_update_2  <- FALSE
     session_data$tu_meta         <- list()
     session_data$finalized       <- NULL
+    session_data$frozen          <- FALSE
+    session_data$frozen_at       <- NULL
+    session_data$last_edited     <- NULL
 
     committed_entries(list())
     committed_revisions(list())
@@ -1581,26 +1849,95 @@ server <- function(input, output, session) {
     bump_ui()
   }
 
-  # Auto-save to sessions/{iso}.rds whenever any data changes
+  # Auto-save this country's session pin whenever any data changes
   observe({
     req(credentials$authenticated, credentials$country)
     # Touch all fields to create reactive dependencies
     list(session_data$entries, session_data$notes, session_data$responses,
          session_data$no_updates, session_data$flags, session_data$revisions,
+         session_data$age_notes,
          session_data$time_use_1, session_data$time_use_2,
+         session_data$tu_draft_1, session_data$tu_draft_2,
          session_data$tu_no_update, session_data$tu_meta)
-    dir.create("sessions", showWarnings = FALSE)
-    saveRDS(
+    # Record when this country's data was last touched, for the admin panel.
+    # Skipped once right after login, when this observer fires purely because
+    # the country's saved data was just restored into these fields.
+    if (isolate(suppress_edit_stamp())) {
+      suppress_edit_stamp(FALSE)
+    } else {
+      session_data$last_edited <- Sys.time()
+    }
+    ok <- session_write(
       c(reactiveValuesToList(session_data),
         list(tu_survey_name  = isolate(input$tu_survey_name),
              tu_survey_year  = isolate(input$tu_survey_year),
              tu1_explanation = isolate(input$tu1_explanation))),
-      file.path("sessions", paste0(credentials$country, ".rds"))
+      credentials$country
     )
+    if (!ok) {
+      showNotification(
+        "Your latest changes could not be saved to storage. Please try again shortly.",
+        type = "error", duration = 10
+      )
+    }
   })
 
   # ── Helper: null coalescing ──────────────────────────────────────────────────
   `%||%` <- function(x, y) if (is.null(x)) y else x
+
+  # ── Freeze / block collection ───────────────────────────────────────────────
+  # An admin freezes a country from the Admin panel, which writes directly to
+  # that country's session pin (admin and country sessions are separate R
+  # processes with their own session_data, so there is no shared reactive
+  # value to flip). While a country is logged in, this poll re-reads its own
+  # pin periodically so a freeze/unfreeze applied mid-session is picked
+  # up without requiring the user to log out and back in. The interval is
+  # 30s (not 4s as with the old local files) because each poll is now a
+  # round-trip to the pins board.
+  observe({
+    req(credentials$authenticated, credentials$country)
+    invalidateLater(30000)
+    s <- session_read(credentials$country)
+    if (is.null(s)) return()
+    new_frozen <- isTRUE(s$frozen)
+    if (!identical(new_frozen, isolate(session_data$frozen))) {
+      session_data$frozen    <- new_frozen
+      session_data$frozen_at <- s$frozen_at
+    }
+  })
+
+  # Toggles a CSS class on <body> so inputs/buttons inside the two submission
+  # tabs become inert (see .country-frozen rules in stylesheet.css) whenever
+  # this country is frozen.
+  observe({
+    req(credentials$authenticated)
+    runjs(sprintf("document.body.classList.toggle('country-frozen', %s);",
+                  tolower(isTRUE(session_data$frozen))))
+  })
+
+  # Read-only helper for server-side guards below; TRUE once the country is
+  # frozen, whether that was loaded at login or picked up by the poll above.
+  country_is_frozen <- function() isTRUE(isolate(session_data$frozen))
+
+  # Persistent banner shown on every tab once a country is frozen.
+  output$freeze_banner <- renderUI({
+    req(credentials$authenticated)
+    if (!isTRUE(session_data$frozen)) return(NULL)
+    since <- if (!is.null(session_data$frozen_at)) {
+      paste0(" on ", format(session_data$frozen_at, "%d %B %Y at %H:%M"))
+    } else ""
+    tags$div(
+      style = paste0(
+        "background:#fdecea;border-bottom:2px solid #E63312;padding:10px 24px;",
+        "display:flex;align-items:center;gap:10px;font-size:13px;color:#7a251c;"
+      ),
+      tags$span(style = "font-size:16px;", "\u2744"),
+      tags$span(
+        tags$b("This submission has been frozen by the OECD Secretariat"), since, ". ",
+        "No further edits can be recorded. Contact us if you need to make a change."
+      )
+    )
+  })
 
   # ── Well-being Excel template download ─────────────────────────────────────
   output$dl_wb_template <- downloadHandler(
@@ -1784,14 +2121,19 @@ server <- function(input, output, session) {
 
     # ── "Other useful information" notes ──
     kept_notes <- Filter(is_filled, notes)
-    notes_df <- if (length(kept_notes) > 0) {
-      data.frame(measure   = names(kept_notes),
-                 indicator = vapply(names(kept_notes), label_for, character(1)),
-                 note      = vapply(kept_notes, as.character, character(1)),
+    # The "Age groups differ?" answers travel with the notes sheet so the
+    # record copy keeps them too.
+    kept_ages  <- Filter(is_filled, session_data$age_notes %||% list())
+    note_ms    <- union(names(kept_notes), names(kept_ages))
+    notes_df <- if (length(note_ms) > 0) {
+      data.frame(measure   = note_ms,
+                 indicator = vapply(note_ms, label_for, character(1)),
+                 note      = vapply(note_ms, function(m) as.character(kept_notes[[m]] %||% ""), character(1)),
+                 age_groups_differ = vapply(note_ms, function(m) as.character(kept_ages[[m]] %||% ""), character(1)),
                  stringsAsFactors = FALSE, row.names = NULL)
     } else {
       data.frame(measure = character(), indicator = character(), note = character(),
-                 stringsAsFactors = FALSE)
+                 age_groups_differ = character(), stringsAsFactors = FALSE)
     }
 
     # ── Country question-format responses ──
@@ -1897,6 +2239,7 @@ server <- function(input, output, session) {
   # ── Well-being Excel template upload ───────────────────────────────────────
   observeEvent(input$upload_wb_file, {
     req(credentials$authenticated)
+    if (country_is_frozen()) return()
     file_info <- input$upload_wb_file
     req(file_info)
 
@@ -2004,7 +2347,7 @@ server <- function(input, output, session) {
                                    row_text = NULL, saved = NULL,
                                    show_sums = FALSE, computed_codes = character(0),
                                    table_num = 1, no_update_active = FALSE,
-                                   numeric_only = TRUE) {
+                                   numeric_only = TRUE, submitted = FALSE) {
     n_cols <- length(col_names)
     th <- paste(sapply(col_names, function(cn) {
       paste0("<th style='font-size:11px;padding:4px 8px;border:1px solid #ddd;background:#f5f5f5;white-space:pre-wrap;'>", cn, "</th>")
@@ -2087,15 +2430,21 @@ server <- function(input, output, session) {
       "<thead>", header, "</thead><tbody>", body, "</tbody>",
       "</table></div>",
       "<div style='margin-top:10px;display:flex;align-items:center;gap:10px;'>",
-      "<button onclick=\"submitTable('", table_id, "')\" ",
-      "style='background:#009EDB;color:white;border:none;padding:6px 16px;border-radius:5px;cursor:pointer;font-size:12px;font-weight:600;'>",
-      "&#10003; Submit table</button>",
-      "<span id='status_", table_id, "' style='font-size:11px;color:#1F7A4D;font-weight:600;'></span>",
+      "<button onclick=\"saveTable('", table_id, "')\" ",
+      "style='background:#f5f5f5;color:#333;border:1px solid #ccc;padding:6px 16px;border-radius:5px;cursor:pointer;font-size:12px;font-weight:600;'>",
+      "Save and continue</button>",
+      "<span id='status_", table_id, "' style='font-size:11px;color:#1F7A4D;font-weight:600;'>",
+      if (isTRUE(submitted)) "&#10003; Submitted" else "", "</span>",
+      "<span style='font-size:11px;color:#8a9bae;'>Stores your progress; submit both tables at the end of step 3.</span>",
       "</div></div>"
     )
   }
 
   # ── Last time use survey on record at the OECD (read-only, informational) ────
+  # Sits directly inside the "Your time use survey on record" wb-card, so this
+  # no longer draws its own bordered box around the content (that produced a
+  # box-within-a-box look); the survey name/year and submission round are
+  # emphasised with size/weight/colour instead.
   output$tu_last_survey_box <- renderUI({
     req(credentials$authenticated, credentials$country)
     rec <- last_tu_survey[[credentials$country]]
@@ -2109,12 +2458,13 @@ server <- function(input, output, session) {
       yr <- if ("survey_year" %in% names(rec)) as.character(rec$survey_year[1]) else NA_character_
       yu <- if ("year_used"   %in% names(rec)) as.character(rec$year_used[1])   else NA_character_
       tags$div(
-        tags$span(
-          style = "font-size:13px;font-weight:600;color:#1F2B3A;",
+        style = "margin:8px 0 14px;padding:10px 14px;background:#f7f9fc;border-left:3px solid #003189;border-radius:0 6px 6px 0;",
+        tags$div(
+          style = "font-size:16px;font-weight:700;color:#003189;line-height:1.3;",
           paste0(nm, if (!is.na(yr) && nzchar(yr)) paste0(" (", yr, ")") else "")
         ),
         if (!is.na(yu) && nzchar(yu)) tags$div(
-          style = "font-size:11px;color:#55606B;margin-top:3px;",
+          style = "font-size:12.5px;font-weight:600;color:#1F2B3A;margin-top:4px;",
           paste0("Submitted as part of the ", yu, " data request.")
         )
       )
@@ -2124,19 +2474,13 @@ server <- function(input, output, session) {
     status_text <- if (is_active) "\u2713 Marked as no update" else ""
 
     tags$div(
-      style = paste0(
-        "background:#f0f6ff;border:1px solid #c5d7ee;border-radius:8px;",
-        "padding:14px 18px;margin-bottom:14px;"
-      ),
-      tags$p(style = "font-weight:700;margin:0 0 4px;font-size:12px;color:#003189;",
-             "Most recent time use survey on record at the OECD"),
-      tags$p(style = "font-size:11px;color:#55606B;margin:0 0 8px;line-height:1.5;",
+      tags$p(style = "font-size:11px;color:#55606B;margin:0 0 4px;line-height:1.5;",
              "This is the survey you previously submitted to us, shown here for your information. ",
              "If this is still your latest time use survey, you do not need to fill in the tables below; ",
              "just click ", tags$b("No time use data update to declare"), " to finish this page."),
       detail,
       tags$div(
-        style = "margin-top:12px;display:flex;align-items:center;gap:10px;",
+        style = "display:flex;align-items:center;gap:10px;",
         tags$button(
           id = "tu_no_update_btn",
           onclick = "declareTUNoUpdate()",
@@ -2147,6 +2491,47 @@ server <- function(input, output, session) {
         tags$span(id = "tu_no_update_status",
                   style = "font-size:11px;color:#1F7A4D;font-weight:600;",
                   status_text)
+      )
+    )
+  })
+
+  # Compact identity banner for the Time Use hero, mirroring country_status
+  # on the Well-being Submissions tab: country name + a status badge showing
+  # whether a previous time use survey is on record.
+  output$tu_country_status <- renderUI({
+    req(credentials$authenticated)
+    rec <- last_tu_survey[[credentials$country]]
+    has_rec <- !is.null(rec) && nrow(rec) > 0
+    yr <- if (has_rec && "survey_year" %in% names(rec)) as.character(rec$survey_year[1]) else NA_character_
+
+    tags$div(class = "wb-status-row",
+      tags$div(
+        style = "display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;",
+        tags$span(style = "font-size:22px;font-weight:700;color:#1F2B3A;",
+                  paste0("Welcome, ", credentials$country_name)),
+        if (has_rec) {
+          tags$span(
+            style = paste0("font-size:11px;font-weight:600;background:#e8f1fb;color:#003189;",
+                           "border:1px solid #c5d7ee;border-radius:12px;padding:2px 10px;"),
+            paste0("Latest survey on record", if (!is.na(yr) && nzchar(yr)) paste0(": ", yr) else "")
+          )
+        } else {
+          tags$span(
+            style = paste0("font-size:11px;font-weight:600;background:#FFF8E1;color:#8a6d1a;",
+                           "border:1px solid #F5C518;border-radius:12px;padding:2px 10px;"),
+            "No previous time use survey on record"
+          )
+        }
+      ),
+      tags$p(
+        style = "font-size:12.5px;color:#55606B;margin:8px 0 0;line-height:1.5;",
+        if (has_rec) {
+          paste0("Details of the latest Time Use survey that ", credentials$country_name, " shared are shown below. ",
+                 "Update them if you have newer data, or confirm there is no change.")
+        } else {
+          paste0("We have no previous time use survey on record for ", credentials$country_name,
+                 ". Please complete the survey details and tables below.")
+        }
       )
     )
   })
@@ -2174,6 +2559,20 @@ server <- function(input, output, session) {
     blank(m$survey_name) && blank(m$survey_year) && blank(m$notes)
   }
 
+  # Compares meta values after normalising type/whitespace quirks introduced
+  # by the browser round-trip (e.g. a restored numeric year can come back as
+  # a slightly different numeric type than what was stored). Without this,
+  # every fresh login re-triggers a "Saved at <login time>" on an unchanged
+  # survey record, which looks like another country's save leaking through.
+  tu_meta_normalize <- function(m) {
+    yr <- suppressWarnings(as.numeric(m$survey_year %||% NA))
+    list(
+      survey_name = trimws(as.character(m$survey_name %||% "")),
+      survey_year = if (length(yr) != 1 || is.na(yr)) NA_real_ else yr,
+      notes       = trimws(as.character(m$notes %||% ""))
+    )
+  }
+
   observe({
     req(credentials$authenticated)
     m   <- tu_meta_inputs()
@@ -2182,7 +2581,8 @@ server <- function(input, output, session) {
       if (tu_meta_is_blank(m) && length(cur) > 0 && !tu_meta_is_blank(cur)) return()
       tu_meta_synced(TRUE)
     }
-    if (identical(m, cur)) return()
+    if (identical(tu_meta_normalize(m), tu_meta_normalize(cur))) return()
+    if (country_is_frozen()) return()
     session_data$tu_meta <- m
     tu_meta_saved_at(Sys.time())
   })
@@ -2196,19 +2596,21 @@ server <- function(input, output, session) {
   output$time_use_table1_ui <- renderUI({
     HTML(make_time_use_table(31, time_use_col_names_1, 2, "tu_table1",
                               row_text = time_use_row_text_1,
-                              saved    = session_data$time_use_1,
+                              saved    = session_data$tu_draft_1 %||% session_data$time_use_1,
                               show_sums = TRUE,
                               computed_codes = c("T"),
                               table_num = 1,
-                              no_update_active = isTRUE(session_data$tu_no_update_1)))
+                              no_update_active = isTRUE(session_data$tu_no_update_1),
+                              submitted = !is.null(session_data$time_use_1)))
   })
   output$time_use_table2_ui <- renderUI({
     HTML(make_time_use_table(30, time_use_col_names_2, 2, "tu_table2",
                               row_text = time_use_row_text_2,
-                              saved    = session_data$time_use_2,
+                              saved    = session_data$tu_draft_2 %||% session_data$time_use_2,
                               table_num = 2,
                               no_update_active = isTRUE(session_data$tu_no_update_2),
-                              numeric_only = FALSE))
+                              numeric_only = FALSE,
+                              submitted = !is.null(session_data$time_use_2)))
   })
 
   # ── Response-format HTML builder ─────────────────────────────────────────────
@@ -2565,8 +2967,14 @@ server <- function(input, output, session) {
         ""
       }
 
-      # Retrieve saved age-flag note for this measure
-      saved_age_flag <- if (!is.null(saved) && !is.null(saved[["age_flag"]])) saved[["age_flag"]] else ""
+      # The "Age groups differ?" note is free text, so it lives in its own
+      # store. Sessions saved before that store existed kept it among the
+      # numeric values, so fall back to there.
+      saved_age_note <- isolate(session_data$age_notes[[m]])
+      if (is.null(saved_age_note)) saved_age_note <- saved[["age_flag"]][["note"]]
+      saved_age_note <- if (length(saved_age_note) == 1 && is.character(saved_age_note)) {
+        saved_age_note
+      } else ""
 
       # Flag options
       flag_codes <- c("", "B", "E", "P", "D", "U")
@@ -2599,13 +3007,13 @@ server <- function(input, output, session) {
       row_htmls <- sapply(rows, function(r) {
         # Special row: age group difference flag (text input spanning full width)
         if (!is.null(r$is_age_flag) && isTRUE(r$is_age_flag)) {
-          flag_val <- if (is.list(saved_age_flag)) "" else as.character(saved_age_flag)
+          flag_val <- saved_age_note
           return(paste0(
             "<div style='display:flex;align-items:center;margin-bottom:4px;margin-top:2px;'>",
             "<div style='flex:0 0 ", label_w, ";font-size:10px;color:#888;padding-right:6px;text-align:right;font-style:italic;'>",
             "Age groups differ?</div>",
             "<div style='flex:1;'>",
-            "<input type='text' class='year-input' data-row='age_flag' data-year='note' ",
+            "<input type='text' class='age-note-input' data-row='age_flag' data-year='note' ",
             "value='", htmltools::htmlEscape(flag_val, attribute = TRUE), "' ",
             "placeholder='If your age groups differ from the above, describe here' ",
             "style='width:100%;padding:3px 6px;border:1px solid #dde1e6;border-radius:4px;",
@@ -2624,11 +3032,25 @@ server <- function(input, output, session) {
           has_existing   <- nrow(existing_row) > 0
 
           # Value: session save > published/non-used data
+          # The original, un-edited OECD figure for this cell (published data,
+          # falling back to non-used data), independent of anything the
+          # country has since entered or saved. Embedded as data-default so
+          # "Revert to default" can restore it client-side without a round
+          # trip, mirroring how Clear all works.
+          default_val  <- if (has_existing && !is.na(existing_row$obs_value[1])) existing_row$obs_value[1] else NA
+          default_flag <- if (has_existing && lookup$source == "published" &&
+                               "obs_status" %in% names(existing_row) &&
+                               !is.na(existing_row$obs_status[1]) &&
+                               existing_row$obs_status[1] %in% names(status_to_flag)) {
+            unname(status_to_flag[existing_row$obs_status[1]])
+          } else ""
+          default_attr <- if (!is.na(default_val)) paste0("data-default='", default_val, "'") else "data-default=''"
+
           v <- if (!is.null(saved) && !is.null(saved[[r$key]]) &&
                    !is.null(saved[[r$key]][[as.character(yr)]])) {
             saved[[r$key]][[as.character(yr)]]
-          } else if (has_existing && !is.na(existing_row$obs_value[1])) {
-            existing_row$obs_value[1]
+          } else if (!is.na(default_val)) {
+            default_val
           } else NA
           has_val          <- !is.na(v)
           value_attr       <- if (has_val) paste0("value='", v, "'") else ""
@@ -2639,12 +3061,7 @@ server <- function(input, output, session) {
           saved_f <- if (!is.null(saved_flags) && !is.null(saved_flags[[r$key]]) &&
                          !is.null(saved_flags[[r$key]][[as.character(yr)]])) {
             saved_flags[[r$key]][[as.character(yr)]]
-          } else if (has_existing && lookup$source == "published" &&
-                     "obs_status" %in% names(existing_row) &&
-                     !is.na(existing_row$obs_status[1]) &&
-                     existing_row$obs_status[1] %in% names(status_to_flag)) {
-            unname(status_to_flag[existing_row$obs_status[1]])
-          } else ""
+          } else default_flag
           opts_html <- paste(mapply(function(code, lbl) {
             sel <- if (identical(code, saved_f)) " selected" else ""
             paste0("<option value='", code, "'", sel, ">", lbl, "</option>")
@@ -2654,11 +3071,12 @@ server <- function(input, output, session) {
             "<div style='flex:1;min-width:32px;padding:0 1px;display:flex;flex-direction:column;'>",
             "<input type='text' inputmode='decimal' class='year-input' ",
             "data-row='", r$key, "' data-year='", yr, "' ",
-            value_attr, " ", placeholder_attr,
+            value_attr, " ", placeholder_attr, " ", default_attr,
             " oninput=\"this.value=this.value.replace(/[^0-9.\\-]/g,'')\"",
             " style='width:100%;padding:2px 1px;border:1px solid #dde1e6;border-radius:4px 4px 0 0;",
             "font-size:10px;text-align:center;border-bottom:none;margin:0;box-sizing:border-box;'/>",
             "<select class='flag-select' data-row='", r$key, "' data-year='", yr, "' ",
+            "data-default-flag='", default_flag, "' ",
             "style='width:100%;padding:0;border:1px solid #dde1e6;border-radius:0 0 4px 4px;",
             "font-size:7px;text-align:center;color:#999;background:#fafbfc;cursor:pointer;",
             "line-height:1;height:14px;-webkit-appearance:none;appearance:none;margin:0;box-sizing:border-box;'>",
@@ -2681,9 +3099,13 @@ server <- function(input, output, session) {
           "<div style='flex:1;display:flex;'>", paste(cells, collapse=""), "</div></div>"
         )
       })
-      # Flag legend
+      # Flag legend. Includes a slot (filled in per-panel, once the safe_id
+      # is known) so the "Clear all" button sits next to the flag key rather
+      # than next to the "Enter Data" title above.
       flag_legend <- paste0(
-        "<div style='font-size:9px;color:#999;margin-top:6px;margin-left:", label_w, ";padding:4px 8px;",
+        "<div style='display:flex;align-items:center;justify-content:space-between;",
+        "flex-wrap:wrap;gap:10px;margin-top:6px;margin-left:", label_w, ";'>",
+        "<div style='font-size:9px;color:#999;padding:4px 8px;",
         "background:#f8f9fa;border-radius:4px;display:inline-block;'>",
         "<strong style='color:#666;'>Flags:</strong> ",
         "B = Break in series &nbsp;&middot;&nbsp; ",
@@ -2691,6 +3113,8 @@ server <- function(input, output, session) {
         "P = Provisional &nbsp;&middot;&nbsp; ",
         "D = Definition differs &nbsp;&middot;&nbsp; ",
         "U = Low reliability",
+        "</div>",
+        "__CLEAR_ALL_SLOT__",
         "</div>"
       )
       paste0("<div style='overflow-x:auto;margin-top:6px;'>", header_html,
@@ -3026,8 +3450,31 @@ server <- function(input, output, session) {
           panel_body = mapply(function(ni, itu, sid, mn, yi, yc, q, oqh, cqh, def, tech, unt, lbl, is_nu, nth, cth) {
             if (ni) {
               nu_active <- if (is_nu) " active" else ""
+              # "Clear all" is injected into the flag legend at the bottom of
+              # the input grid (see flag_legend's __CLEAR_ALL_SLOT__), so it
+              # sits next to the flags rather than next to the title above.
+              clear_btn_html <- paste0(
+                # Grouped in one flex container (rather than left as loose
+                # siblings) so both buttons sit together at the right edge of
+                # the space-between row above, instead of being spread out
+                # evenly across it.
+                "<div style='display:flex;align-items:center;gap:8px;margin-left:auto;'>",
+                "<button onclick=\"clearAllInputs('", sid, "')\" ",
+                "title='Clear every value and flag in the grid below' ",
+                "style='background:none;border:none;padding:0;color:#8a9bae;font-size:10px;",
+                "text-decoration:underline;cursor:pointer;font-weight:500;white-space:nowrap;'>",
+                "Clear all</button>",
+                "<span style='color:#ccc;font-size:10px;'>|</span>",
+                "<button onclick=\"revertToDefaults('", sid, "')\" ",
+                "title='Revert every value and flag below to the existing OECD data, before any entries were made' ",
+                "style='background:none;border:none;padding:0;color:#8a9bae;font-size:10px;",
+                "text-decoration:underline;cursor:pointer;font-weight:500;white-space:nowrap;'>",
+                "Revert to default</button>",
+                "</div>"
+              )
+              yi_final <- sub("__CLEAR_ALL_SLOT__", clear_btn_html, yi, fixed = TRUE)
               paste0(
-                "<div style='display:flex;flex-direction:row;gap:16px;'>",
+                "<div style='display:flex;flex-direction:row;gap:16px;text-align:left;'>",
                 "<div style='flex:1;overflow:auto;'><strong style='font-size:13px;'>OECD Question Format</strong>",
                 "<div style='margin-top:6px;'>", oqh, "</div></div>",
                 "<div style='flex:1;overflow:auto;'><strong style='font-size:13px;'>Country Question Format</strong>",
@@ -3037,9 +3484,11 @@ server <- function(input, output, session) {
                 nth,
                 cth,
                 "<div style='width:100%;'>",
-                "<strong style='font-size:13px;margin-left:180px;'>Enter Data</strong>",
-                "<div style='font-size:11px;color:#888;margin:2px 0 0 180px;'>Please add any comments on values to the <i>Other useful information</i> box above</div>",
-                "<div id='inputs_", sid, "' data-safeid='", sid, "' data-measure='", mn, "' style='display:flex;flex-direction:row;flex-wrap:wrap;margin-top:8px;'>", yi, "</div>",
+                "<div style='text-align:center;'>",
+                "<strong style='font-size:13px;'>Enter Data</strong>",
+                "<div style='font-size:11px;color:#888;margin:2px 0 0;'>Please add any comments on values to the <i>Other useful information</i> box above and any comments on the breaks to the <i>Are there breaks in the series?</i> box above.</div>",
+                "</div>",
+                "<div id='inputs_", sid, "' data-safeid='", sid, "' data-measure='", mn, "' style='display:flex;flex-direction:row;flex-wrap:wrap;margin-top:8px;text-align:left;'>", yi_final, "</div>",
                 # Status/validation messages sit on their own full-width line
                 # above the buttons: the message can still wrap, and inside the
                 # button row it would shift the buttons.
@@ -3171,6 +3620,10 @@ server <- function(input, output, session) {
     if (!is.null(prev) && record_revisions) {
       is_filled <- function(v) !is.null(v) && !is.na(v) && v != ""
       rev_m <- session_data$revisions[[d$measure]] %||% list()
+      # Fetched once and reused for every cell below (rather than per-cell)
+      # since a measure can have dozens of breakdown/year combinations.
+      dat_lookup <- isolate(dat_rv())
+      iso_lookup <- isolate(credentials$country)
       for (bk in names(prev)) {
         old_row <- prev[[bk]]
         new_row <- d$values[[bk]]
@@ -3185,7 +3638,26 @@ server <- function(input, output, session) {
           changed <- old_filled &&
             ((new_filled && !identical(as.character(old_v), as.character(new_v))) ||
              !new_filled)
-          if (changed) {
+
+          # If what's being submitted now matches the existing OECD data
+          # (published, falling back to non-used) exactly - e.g. after
+          # "Revert to default" - any revision history recorded earlier for
+          # this cell no longer reflects a real difference from what is on
+          # record, so it is cleared rather than extended. Without this, a
+          # revert-then-submit still left the heatmap marked "revised".
+          default_obs <- lookup_default_obs(d$measure, bk, yr, d = dat_lookup, iso = iso_lookup)
+          matches_default <- if (new_filled) {
+            !is.na(default_obs$value) &&
+              isTRUE(all.equal(suppressWarnings(as.numeric(new_v)), default_obs$value))
+          } else {
+            is.na(default_obs$value)
+          }
+
+          if (matches_default) {
+            if (!is.null(rev_m[[bk]]) && !is.null(rev_m[[bk]][[yr]])) {
+              rev_m[[bk]][[yr]] <- NULL
+            }
+          } else if (changed) {
             rev_m[[bk]] <- rev_m[[bk]] %||% list()
             rev_m[[bk]][[yr]] <- c(
               rev_m[[bk]][[yr]] %||% list(),
@@ -3203,6 +3675,9 @@ server <- function(input, output, session) {
     session_data$entries[[d$measure]] <- d$values
     if (!is.null(d$flags))     session_data$flags[[d$measure]]     <- d$flags
     if (!is.null(d$responses)) session_data$responses[[d$measure]] <- d$responses
+    # Free-text note on differing age groups; stored per measure so it is
+    # never treated as a data value.
+    if (!is.null(d$age_note))  session_data$age_notes[[d$measure]] <- d$age_note
     invisible(n_revised)
   }
 
@@ -3224,6 +3699,7 @@ server <- function(input, output, session) {
   # any later action ignores measures that were never explicitly submitted.
   observeEvent(input$saved_draft_data, {
     req(credentials$authenticated)
+    if (country_is_frozen()) return()
     d <- input$saved_draft_data
     commit_measure(d, record_revisions = TRUE, refresh_ui = FALSE)
     runjs(paste0("
@@ -3233,6 +3709,8 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$submitted_data, {
+    req(credentials$authenticated)
+    if (country_is_frozen()) return()
     d <- input$submitted_data
 
     # Only an explicit Submit click marks the measure as officially
@@ -3279,6 +3757,8 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$submitted_note, {
+    req(credentials$authenticated)
+    if (country_is_frozen()) return()
     d <- input$submitted_note
     session_data$notes[[d$measure]] <- d$note
     runjs(paste0("
@@ -3288,6 +3768,8 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$no_update_declared, {
+    req(credentials$authenticated)
+    if (country_is_frozen()) return()
     d <- input$no_update_declared
     session_data$no_updates[[d$measure]] <- d$active
     bump_ui()
@@ -3304,20 +3786,63 @@ server <- function(input, output, session) {
     "))
   })
 
-  observeEvent(input$submitted_table, {
-    d <- input$submitted_table
-    if (d$table == "tu_table1") session_data$time_use_1 <- d$data
-    else                        session_data$time_use_2 <- d$data
+  # "Save and continue" on a single time use table: keeps a draft only. The
+  # time use submission is not treated as complete until both tables are
+  # submitted together via the button at the end of step 3.
+  observeEvent(input$saved_table, {
+    req(credentials$authenticated)
+    if (country_is_frozen()) return()
+    d <- input$saved_table
+    if (identical(d$table, "tu_table1")) session_data$tu_draft_1 <- d$data
+    else                                 session_data$tu_draft_2 <- d$data
+    runjs(paste0("
+      var el = document.getElementById('status_", d$table, "');
+      if(el) { el.style.color = '#1F7A4D';
+               el.innerText = '\\u2713 Progress saved at ", format(Sys.time(), "%H:%M:%S"), " (not yet submitted)'; }
+    "))
+  })
+
+  # Final submission of step 3: survey details plus both tables together.
+  observeEvent(input$tu_submit_all, {
+    req(credentials$authenticated)
+    if (country_is_frozen()) return()
+    d <- input$tu_submit_all
+    blank <- function(v) {
+      is.null(v) || length(v) != 1 || is.na(v) || !nzchar(trimws(as.character(v)))
+    }
+    missing <- c(if (blank(input$tu_survey_name)) "survey name",
+                 if (blank(input$tu_survey_year)) "latest survey year")
+    if (length(missing) > 0) {
+      runjs(paste0("
+        var el = document.getElementById('tu_submit_all_status');
+        if(el) { el.style.color = '#E63312';
+                 el.innerText = '\\u26A0 Please fill in the ", paste(missing, collapse = " and "),
+                 " above before submitting.'; }
+      "))
+      return()
+    }
+
+    session_data$tu_draft_1 <- d$t1
+    session_data$tu_draft_2 <- d$t2
+    session_data$time_use_1 <- d$t1
+    session_data$time_use_2 <- d$t2
     # Time-use indicators on the submissions tab depend on this, so refresh.
     bump_ui()
     runjs(paste0("
-      var el = document.getElementById('status_", d$table, "');
-      if(el) { el.innerText = '\\u2713 Saved at ", format(Sys.time(), "%H:%M:%S"), "'; }
+      var el = document.getElementById('tu_submit_all_status');
+      if(el) { el.style.color = '#1F7A4D';
+               el.innerText = '\\u2713 Time use tables submitted at ", format(Sys.time(), "%H:%M:%S"), "'; }
+      ['tu_table1','tu_table2'].forEach(function(t) {
+        var s = document.getElementById('status_' + t);
+        if(s) { s.style.color = '#1F7A4D'; s.innerText = '\\u2713 Submitted'; }
+      });
     "))
   })
 
   # ── Time-use no-update observer ────────────────────────────────────────────
   observeEvent(input$tu_no_update_declared, {
+    req(credentials$authenticated)
+    if (country_is_frozen()) return()
     d <- input$tu_no_update_declared
     session_data$tu_no_update <- d$active
     bump_ui()
@@ -3338,6 +3863,8 @@ server <- function(input, output, session) {
   # observer the JS message was sent but never stored, so time-use indicators
   # never progressed past "Awaiting data input".
   observeEvent(input$tu_table_no_update_declared, {
+    req(credentials$authenticated)
+    if (country_is_frozen()) return()
     d <- input$tu_table_no_update_declared
     if (identical(as.character(d$table), "1")) {
       session_data$tu_no_update_1 <- isTRUE(d$active)
@@ -3418,16 +3945,16 @@ server <- function(input, output, session) {
   # ── Final submit ──────────────────────────────────────────────────────────
   observeEvent(input$final_submit_btn, {
     req(credentials$authenticated, credentials$country)
+    if (country_is_frozen()) return()
     # Mark as finalized with timestamp
     session_data$finalized <- Sys.time()
     # Save session immediately
-    dir.create("sessions", showWarnings = FALSE)
-    saveRDS(
+    session_write(
       c(reactiveValuesToList(session_data),
         list(tu_survey_name  = isolate(input$tu_survey_name),
              tu_survey_year  = isolate(input$tu_survey_year),
              tu1_explanation = isolate(input$tu1_explanation))),
-      file.path("sessions", paste0(credentials$country, ".rds"))
+      credentials$country
     )
     # Show confirmation overlay
     runjs("document.getElementById('final_submit_confirm').style.display='flex';")
@@ -3464,6 +3991,10 @@ server <- function(input, output, session) {
 
   # ── Admin ───────────────────────────────────────────────────────────────────
   admin_auth <- reactiveVal(FALSE)
+  # Bumped after a freeze/unfreeze toggle so the completion table and the
+  # per-country controls panel re-read the session file immediately, without
+  # waiting for a country filter/table change.
+  admin_refresh <- reactiveVal(0)
 
   observeEvent(input$admin_logout_btn, {
     admin_auth(FALSE)
@@ -3488,19 +4019,101 @@ server <- function(input, output, session) {
     shinyjs::show("login_screen")
   })
 
+  # ── Per-country freeze / last-activity panel ────────────────────────────────
+  # Shown once a specific country (not "All countries") is picked in the
+  # filter above. Freezing sets a flag in that country's session file; the
+  # country's own live session polls this flag every few seconds and, on
+  # every mutating observer, refuses further changes while it is TRUE.
+  output$admin_country_controls <- renderUI({
+    req(admin_auth())
+    admin_refresh()
+    iso <- input$admin_country_filter %||% "ALL"
+    if (!nzchar(iso) || iso == "ALL") {
+      return(tags$p(style = "font-size:12px;color:#888;margin:4px 0 16px;",
+                     "Select a single country above to view its last activity or freeze its submission."))
+    }
+    s <- session_read(iso)
+    is_frozen   <- !is.null(s) && isTRUE(s$frozen)
+    cname       <- {n <- names(country_name_vector)[country_name_vector == iso]; if (length(n)) n[1] else iso}
+    last_edited <- if (!is.null(s) && !is.null(s$last_edited)) {
+      format(s$last_edited, "%d %b %Y at %H:%M")
+    } else "No edits recorded yet"
+    frozen_at <- if (is_frozen && !is.null(s$frozen_at)) format(s$frozen_at, "%d %b %Y at %H:%M") else NULL
+
+    tags$div(
+      style = paste0(
+        "background:", if (is_frozen) "#fdecea" else "#f0f6ff", ";",
+        "border:1px solid ", if (is_frozen) "#f3b4ab" else "#c5d7ee", ";",
+        "border-radius:8px;padding:14px 18px;margin:4px 0 20px;",
+        "display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;"
+      ),
+      tags$div(
+        tags$p(style = "font-weight:700;margin:0 0 4px;font-size:13px;color:#1F2B3A;",
+               paste0(cname, " (", iso, ")")),
+        tags$p(style = "font-size:12px;color:#55606B;margin:0;",
+               paste0("Last edited: ", last_edited)),
+        if (is_frozen) tags$p(
+          style = "font-size:12px;color:#a83a2c;font-weight:600;margin:4px 0 0;",
+          paste0("\u2744 Frozen", if (!is.null(frozen_at)) paste0(" since ", frozen_at) else "",
+                 " \u2014 the country can no longer edit this submission.")
+        )
+      ),
+      if (is_frozen) {
+        actionButton("admin_unfreeze_btn", "Unfreeze submission", icon = icon("unlock"),
+                     style = "background:#1F7A4D;color:white;border:none;font-weight:600;")
+      } else {
+        actionButton("admin_freeze_btn", "Freeze submission", icon = icon("lock"),
+                     style = "background:#E63312;color:white;border:none;font-weight:600;")
+      }
+    )
+  })
+
+  # Applies a freeze/unfreeze directly to the country's session file. This
+  # happens from a separate R session (the admin's), so it cannot write to
+  # that country's live session_data; the country's session instead polls
+  # its own file periodically and picks the change up within a few seconds.
+  set_country_frozen <- function(iso, frozen) {
+    s <- session_read(iso)
+    if (is.null(s)) s <- list()
+    s$frozen    <- frozen
+    s$frozen_at <- if (frozen) Sys.time() else NULL
+    session_write(s, iso)
+  }
+
+  observeEvent(input$admin_freeze_btn, {
+    req(admin_auth())
+    iso <- input$admin_country_filter
+    req(iso, iso != "ALL")
+    set_country_frozen(iso, TRUE)
+    admin_refresh(admin_refresh() + 1)
+  })
+
+  observeEvent(input$admin_unfreeze_btn, {
+    req(admin_auth())
+    iso <- input$admin_country_filter
+    req(iso, iso != "ALL")
+    set_country_frozen(iso, FALSE)
+    admin_refresh(admin_refresh() + 1)
+  })
+
   # Read all session files and assemble into tidy tables
   admin_all_data <- reactive({
     req(admin_auth())
-    # Re-read every time the reactive fires (invalidated by table selection / filter)
+    # Re-read every time the reactive fires (invalidated by table selection /
+    # filter, or by a freeze/unfreeze toggle).
     input$admin_country_filter
     input$admin_table_select
+    admin_refresh()
 
-    rds_files <- list.files("sessions", pattern = "^[A-Z]{3}\\.rds$", full.names = TRUE)
+    isos <- session_list_countries()
+    # Read every saved session once; reused by the tidy-table loop below and
+    # the completion-status table (avoids repeated round-trips to the board).
+    saved_sessions <- setNames(lapply(isos, session_read), isos)
     empty <- list(entries = data.frame(), flags = data.frame(),
                   notes = data.frame(), no_updates = data.frame(),
                   responses = data.frame(), tu1 = data.frame(),
                   tu2 = data.frame(), feedback = data.frame())
-    if (length(rds_files) == 0) return(empty)
+    if (length(isos) == 0) return(empty)
 
     all_entries    <- list()
     all_flags      <- list()
@@ -3510,9 +4123,8 @@ server <- function(input, output, session) {
     all_tu1        <- list()
     all_tu2        <- list()
 
-    for (f in rds_files) {
-      iso <- sub("\\.rds$", "", basename(f))
-      s   <- tryCatch(readRDS(f), error = function(e) NULL)
+    for (iso in isos) {
+      s <- saved_sessions[[iso]]
       if (is.null(s)) next
       cname <-  country_name_vector[country_name_vector == iso] %>% names()
 
@@ -3625,10 +4237,8 @@ server <- function(input, output, session) {
     }
 
     # Load feedback
-    fb_file <- file.path("sessions", "feedback.rds")
-    fb_df <- if (file.exists(fb_file)) {
-      fb_list <- tryCatch(readRDS(fb_file), error = function(e) list())
-      if (length(fb_list) > 0) {
+    fb_list <- session_read("feedback") %||% list()
+    fb_df <- if (length(fb_list) > 0) {
         bind_rows(lapply(fb_list, function(fb) {
           cname <-  country_name_vector[country_name_vector == fb$country] %>% names()
           data.frame(
@@ -3639,7 +4249,6 @@ server <- function(input, output, session) {
             stringsAsFactors = FALSE
           )
         }))
-      } else data.frame()
     } else data.frame()
 
     # ── Build completion status table ──────────────────────────────────────
@@ -3661,8 +4270,7 @@ server <- function(input, output, session) {
     for (i in seq_along(all_countries)) {
       iso   <- all_countries[i]
       cname <- all_country_names[i]
-      spath <- file.path("sessions", paste0(iso, ".rds"))
-      s     <- if (file.exists(spath)) tryCatch(readRDS(spath), error = function(e) NULL) else NULL
+      s <- saved_sessions[[iso]]
 
       is_eu_silc <- iso %in% eu_silc_countries
 
@@ -3699,8 +4307,14 @@ server <- function(input, output, session) {
         format(s$finalized, "%Y-%m-%d %H:%M")
       } else ""
 
+      last_edited_str <- if (!is.null(s) && !is.null(s$last_edited)) {
+        format(s$last_edited, "%Y-%m-%d %H:%M")
+      } else ""
+      frozen_str <- if (!is.null(s) && isTRUE(s$frozen)) "Frozen" else ""
+
       row <- c(country = cname, iso = iso, indicator_status,
                "TU Table 1" = tu1_status, "TU Table 2" = tu2_status,
+               "Last edited" = last_edited_str, "Status" = frozen_str,
                Finalized = finalized)
       completion_rows[[length(completion_rows) + 1]] <- row
     }
@@ -3748,8 +4362,9 @@ server <- function(input, output, session) {
                     options = list(pageLength = 50, scrollX = TRUE,
                                   columnDefs = list(list(className = "dt-center",
                                                          targets = seq(1, ncol(display_df) - 1)))))
-      # Style status columns (all except 'country' and 'Finalized')
-      status_cols <- setdiff(names(display_df), c("country", "Finalized"))
+      # Style status columns (indicator/TU columns only; "Last edited",
+      # "Status" and "Finalized" get their own treatment below)
+      status_cols <- setdiff(names(display_df), c("country", "Last edited", "Status", "Finalized"))
       for (col in status_cols) {
         dt <- dt %>%
           DT::formatStyle(col,
@@ -3762,6 +4377,15 @@ server <- function(input, output, session) {
               c("#155724", "#856404", "#721c24", "#ccc")
             ),
             fontWeight = "600",
+            fontSize = "11px"
+          )
+      }
+      if ("Status" %in% names(display_df)) {
+        dt <- dt %>%
+          DT::formatStyle("Status",
+            backgroundColor = DT::styleEqual(c("Frozen", ""), c("#fdecea", "transparent")),
+            color = DT::styleEqual(c("Frozen", ""), c("#a83a2c", "#ccc")),
+            fontWeight = "700",
             fontSize = "11px"
           )
       }
@@ -3795,7 +4419,18 @@ server <- function(input, output, session) {
       paste0("portal_sessions_", format(Sys.time(), "%Y%m%d_%H%M"), ".zip")
     },
     content = function(file) {
-      files <- list.files("sessions", pattern = "\\.rds$", full.names = TRUE)
+      # Materialise each pin back into a flat .rds file so the archive keeps
+      # the same layout as before (and stays restorable via the upload below).
+      tmpdir <- file.path(tempdir(), paste0("backup_", as.integer(Sys.time())))
+      dir.create(tmpdir, showWarnings = FALSE, recursive = TRUE)
+      files <- character(0)
+      for (nm in session_list_all()) {
+        obj <- session_read(nm)
+        if (is.null(obj)) next
+        f <- file.path(tmpdir, paste0(nm, ".rds"))
+        saveRDS(obj, f)
+        files <- c(files, f)
+      }
       if (length(files) == 0) {
         # Still produce a valid (empty) archive rather than a broken download.
         tmp <- file.path(tempdir(), "EMPTY.txt")
@@ -3836,8 +4471,9 @@ server <- function(input, output, session) {
         stop("Unreadable file(s) in archive: ", paste(basename(bad), collapse = ", "))
       }
 
-      dir.create("sessions", showWarnings = FALSE)
-      ok <- file.copy(keep, file.path("sessions", basename(keep)), overwrite = TRUE)
+      ok <- vapply(keep, function(f) {
+        session_write(readRDS(f), sub("\\.rds$", "", basename(f)))
+      }, logical(1))
       sum(ok)
     }, error = function(e) e)
 
@@ -3876,13 +4512,11 @@ server <- function(input, output, session) {
 
   observeEvent(input$admin_reset_confirm_btn, {
     req(admin_auth())
-    # Delete all country session files
-    rds_files <- list.files("sessions", pattern = "^[A-Z]{3}\\.rds$", full.names = TRUE)
-    n_deleted <- 0
-    for (f in rds_files) {
-      tryCatch({ file.remove(f); n_deleted <- n_deleted + 1 },
-               error = function(e) NULL)
-    }
+    # Delete all country session pins (passwords and feedback are kept)
+    isos <- session_list_countries()
+    n_deleted <- if (length(isos) > 0) {
+      sum(vapply(isos, session_delete, logical(1)))
+    } else 0
     admin_reset_confirm(FALSE)
     output$admin_reset_feedback <- renderUI(
       tags$p(style = "color:#1F7A4D;font-size:12px;font-weight:600;",
@@ -3899,15 +4533,13 @@ server <- function(input, output, session) {
         tags$span(style = "font-size:11px;color:#E63312;", "Please enter some feedback first."))
       return()
     }
-    dir.create("sessions", showWarnings = FALSE)
-    fb_file <- file.path("sessions", "feedback.rds")
-    existing <- if (file.exists(fb_file)) tryCatch(readRDS(fb_file), error = function(e) list()) else list()
+    existing <- session_read("feedback") %||% list()
     existing[[length(existing) + 1]] <- list(
       country   = credentials$country %||% "unknown",
       timestamp = Sys.time(),
       message   = fb_text
     )
-    saveRDS(existing, fb_file)
+    session_write(existing, "feedback")
     # Clear the textarea
     runjs("document.getElementById('feedback_text').value = '';")
     output$feedback_status <- renderUI(

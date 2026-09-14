@@ -2,3 +2,8 @@
 .Rhistory
 .RData
 .Ruserdata
+sessions/
+passwords.RDS
+gdrive-key.json
+drive-token/
+.secrets

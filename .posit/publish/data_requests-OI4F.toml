@@ -10,6 +10,7 @@ files = [
     "/.posit/publish/data_requests-OI4F.toml",
     "/.posit/publish/deployments/deployment-F8NK.toml",
     "/data",
+    "/drive-token",
     "/global.R",
     "/www",
 ]

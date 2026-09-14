@@ -140,9 +140,8 @@ select.form-control { cursor: pointer; }
   align-items: center;
   justify-content: center;
   gap: 32px;
-  margin-bottom: 24px;
-  padding-bottom: 24px;
-  border-bottom: 1px solid var(--oecd-light);
+  margin-bottom: 20px;
+  padding-bottom: 20px;
 }
 
 /* ── Session card ────────────────────────────────────────────────────────── */
@@ -453,3 +452,156 @@ textarea.form-control {
 
 /* ── Misc utilities ──────────────────────────────────────────────────────── */
 hr { border-color: var(--oecd-border) !important; }
+
+/* ── Well-being submissions landing: unified section widths ─────────────── */
+/* Every section on this tab shares one max-width so the page reads as a
+   single aligned column instead of boxes of differing widths. */
+.wb-page {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 4px 15px 40px;
+}
+.wb-page > * + * { margin-top: 20px; }
+.wb-page .landing-hero,
+.wb-page .heatmap-content {
+  max-width: none;
+  margin: 0;
+}
+
+/* Shared card shell for the guide + bulk-entry sections */
+.wb-card {
+  background: #fff;
+  border: 1px solid var(--oecd-border);
+  border-radius: 10px;
+  padding: 20px 26px;
+  box-shadow: 0 2px 12px rgba(0,49,137,0.05);
+}
+.wb-card-title {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--oecd-navy);
+  margin: 0 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.wb-card-wide { padding-left: 14px; padding-right: 14px; }
+.wb-card-title .wb-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: var(--oecd-navy);
+  color: #fff !important;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* Two-column guide list, OECD publication-style layout */
+.wb-guide-list {
+  column-count: 2;
+  column-gap: 32px;
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.wb-guide-list li {
+  break-inside: avoid-column;
+  margin-bottom: 10px;
+}
+@media (max-width: 760px) {
+  .wb-guide-list { column-count: 1; }
+}
+
+/* Country status banner, folded into the top of the hero card */
+.wb-status-row {
+  padding-bottom: 20px;
+  margin-bottom: px;
+}
+
+/* Sub-headings for the parts of step 3 on the Time Use tab */
+.tu-subhead {
+  font-size: 13px !important;
+  font-weight: 700;
+  color: var(--oecd-navy) !important;
+  margin: 0 0 8px;
+  line-height: 1.45;
+}
+
+/* Related-resources grid inside the hero intro */
+.wb-resource-heading {
+  font-size: 12px !important;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--oecd-grey) !important;
+  margin: 22px 0 10px;
+  padding-top: 18px;
+}
+.wb-resource-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+}
+.wb-resource-card {
+  display: block;
+  background: var(--oecd-light);
+  border: 1px solid var(--oecd-border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  text-decoration: none !important;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+.wb-resource-card:hover,
+.wb-resource-card:focus-visible {
+  border-color: var(--oecd-blue, #009EDB);
+  background: #ffffff;
+  box-shadow: 0 2px 6px rgba(0, 49, 137, 0.12);
+}
+.wb-resource-card-featured {
+  background: #fffdf3;
+  border-color: #F5C518;
+  box-shadow: 0 1px 4px rgba(245, 197, 24, 0.35);
+}
+.wb-resource-card-featured:hover { border-color: #d8a900; }
+.wb-resource-badge {
+  display: inline-block;
+  font-size: 9px !important;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8a6d1a !important;
+  background: #FDF1C8;
+  border: 1px solid #F5C518;
+  border-radius: 10px;
+  padding: 1px 7px;
+  margin-top: 4px;
+}
+.wb-resource-card-title {
+  display: block;
+  font-size: 12px !important;
+  font-weight: 700;
+  color: var(--oecd-navy) !important;
+}
+.wb-resource-card:hover .wb-resource-card-title { text-decoration: underline; }
+.wb-resource-card p {
+  font-size: 11px !important;
+  color: var(--text-mid) !important;
+  margin: 4px 0 0 !important;
+  line-height: 1.45 !important;
+}
+
+/* ── Frozen country submissions ──────────────────────────────────────────
+   Toggled on <body> once session_data$frozen is TRUE. Scoped to .wb-page so
+   navigation, logout and the feedback footer (outside .wb-page) stay usable;
+   download links (<a> tags) are unaffected, only real editing controls. */
+body.country-frozen .wb-page input,
+body.country-frozen .wb-page textarea,
+body.country-frozen .wb-page select,
+body.country-frozen .wb-page button {
+  pointer-events: none !important;
+  opacity: 0.55;
+  cursor: not-allowed !important;
+}
