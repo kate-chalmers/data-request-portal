@@ -30,7 +30,9 @@ library(pins)
 gdrive_sessions_folder <-
   "https://drive.google.com/drive/folders/1eKx4D63BnWe-npz2XrXgJaXwpuTbGCHe"
 
-session_board <- if (dir.exists("drive-token") && length(list.files("drive-token")) > 0) {
+using_gdrive_board <- dir.exists("drive-token") && length(list.files("drive-token")) > 0
+
+session_board <- if (using_gdrive_board) {
   options(gargle_oauth_cache = "drive-token", gargle_oauth_email = TRUE)
   googledrive::drive_auth()
   board_gdrive(gdrive_sessions_folder)
@@ -38,6 +40,56 @@ session_board <- if (dir.exists("drive-token") && length(list.files("drive-token
   message("Session storage: using LOCAL folder board (no cached Drive token found). ",
           "Fine for development; sessions will NOT persist on a hosted server.")
   board_folder("sessions")
+}
+
+# ── Async Drive access (mirai) ────────────────────────────────────────────────
+# A Drive round-trip takes several seconds, and shinyapps.io serves multiple
+# users from one R process, so a synchronous pin_write() inside an observer
+# freezes the UI for *everyone* on that worker. When the Drive board is in
+# use, reads/writes are instead shipped to a small pool of mirai daemons that
+# hold their own authenticated copy of the board; results come back as
+# promises. If mirai is unavailable or daemon setup fails, the app falls back
+# to the synchronous helpers above (slow but safe). The local folder board is
+# effectively instant, so it never needs daemons.
+async_board_enabled <- using_gdrive_board &&
+  requireNamespace("mirai", quietly = TRUE) &&
+  tryCatch({
+    mirai::daemons(2)
+    mirai::everywhere({
+      library(pins)
+      options(gargle_oauth_cache = "drive-token", gargle_oauth_email = TRUE)
+      googledrive::drive_auth()
+      # mirai evaluates expressions in a throwaway environment, so the board
+      # must be placed in the daemon's global env explicitly to persist.
+      assign(".session_board", board_gdrive(.gdrive_folder), envir = .GlobalEnv)
+    }, .gdrive_folder = gdrive_sessions_folder)
+    TRUE
+  }, error = function(e) {
+    message("Async Drive access disabled (falling back to synchronous writes): ",
+            conditionMessage(e))
+    FALSE
+  })
+
+# Async counterparts of session_write()/session_read(). Each returns a mirai
+# (promise-compatible): resolve with promises::then(). The write resolves to
+# TRUE/FALSE like session_write(); the read resolves to the object or NULL.
+# Only call these when async_board_enabled is TRUE.
+session_write_async <- function(x, name) {
+  mirai::mirai({
+    tryCatch({
+      suppressMessages(
+        pins::pin_write(.session_board, x, name = name, type = "rds",
+                        versioned = FALSE)
+      )
+      TRUE
+    }, error = function(e) FALSE)
+  }, x = x, name = name)
+}
+
+session_read_async <- function(name) {
+  mirai::mirai({
+    tryCatch(pins::pin_read(.session_board, name), error = function(e) NULL)
+  }, name = name)
 }
 
 # Read a stored object by pin name; NULL if absent or unreadable. (No upfront
@@ -70,11 +122,33 @@ session_list_countries <- function() {
            error = function(e) character(0))
 }
 
-# Everything the app stores: country sessions plus the password/feedback pins.
+# Everything the app stores: country sessions plus the utility pins.
 session_list_all <- function() {
-  tryCatch(grep("^([A-Z]{3}|passwords|feedback)$", pin_list(session_board),
+  tryCatch(grep("^([A-Z]{3}|passwords|feedback|frozen)$", pin_list(session_board),
                 value = TRUE),
            error = function(e) character(0))
+}
+
+# ── Admin freeze flags ────────────────────────────────────────────────────────
+# Freeze/unfreeze state lives in one tiny "frozen" pin: a named list of
+# iso → POSIXct frozen-at timestamp (absence = not frozen). Keeping it out of
+# the large per-country session pins means (a) the in-app freeze poll reads a
+# few hundred bytes instead of re-downloading the whole session, and (b) an
+# admin freeze can never clobber a country's concurrent edits.
+#
+# Migration: sessions saved before this change carry a legacy `frozen` field.
+# That field is honoured only while the "frozen" pin does not exist yet; the
+# first admin freeze/unfreeze creates the pin, which is authoritative from
+# then on.
+frozen_map_read <- function() {
+  session_read("frozen")  # NULL = pin absent → legacy fallback applies
+}
+
+frozen_map_set <- function(iso, frozen) {
+  m <- frozen_map_read()
+  if (is.null(m)) m <- list()
+  m[[iso]] <- if (frozen) Sys.time() else NULL
+  session_write(m, "frozen")
 }
 
 oecd_countries <- c("AUS", "AUT", "BEL", "CAN", "CHL", "COL", "CZE", "DNK", "EST", "FIN",

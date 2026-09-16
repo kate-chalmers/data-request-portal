@@ -138,6 +138,7 @@ shared_head <- tagList(
 
     function submitMeasure(safe_id, measure) {      var container = document.getElementById('inputs_' + safe_id);
       if (!validateMeasureRanges(container, measure, safe_id)) return;
+      if (!checkBreakdownConsistency(container, measure, safe_id)) return;
       var inputs = container.querySelectorAll('.year-input');
 
       var values = {};
@@ -148,7 +149,7 @@ shared_head <- tagList(
         // Send an explicit empty string (not null) for a blank cell so the
         // server can tell explicitly-cleared apart from never-touched;
         // otherwise a cleared field falls back to the published value.
-        values[row][yr] = inp.value === '' ? '' : parseFloat(inp.value);
+        values[row][yr] = inp.value === '' ? '' : parseFloat(String(inp.value).replace(',', '.'));
         inp.style.border = '1px solid #ccc';
       });
       // Collect data flags (B, E, P, etc.)
@@ -202,6 +203,46 @@ shared_head <- tagList(
     });
 
   ")),
+  # Separate <script> tag, for the same 10000-character reason noted below.
+  tags$script(HTML("
+    // Non-blocking plausibility check run by submitMeasure() after the
+    // blocking range validation. Warns when a demographic breakdown value is
+    // wildly different from the country average for the same year (gap above
+    // 40% of the measure's allowed range span). The vert/dep rows are
+    // different concepts from the country average, so they are skipped.
+    // The user can always dismiss the warning and submit anyway.
+    function checkBreakdownConsistency(container, measure, safe_id) {
+      var range = window.__validRanges && window.__validRanges[measure];
+      if (!range) return true;
+      var threshold = 0.4 * (range.max - range.min);
+      var avg = {};
+      container.querySelectorAll('.year-input').forEach(function(inp) {
+        if ((inp.dataset.row || 'country_avg') !== 'country_avg') return;
+        var v = parseFloat(String(inp.value).replace(',', '.'));
+        if (!isNaN(v)) avg[inp.dataset.year] = v;
+      });
+      var offenders = [];
+      container.querySelectorAll('.year-input').forEach(function(inp) {
+        var row = inp.dataset.row || 'country_avg';
+        if (row === 'country_avg' || row === 'vert' || row === 'dep') return;
+        var a = avg[inp.dataset.year];
+        if (a === undefined) return;
+        var v = parseFloat(String(inp.value).replace(',', '.'));
+        if (isNaN(v)) return;
+        if (Math.abs(v - a) > threshold) offenders.push(inp);
+      });
+      if (offenders.length === 0) return true;
+      offenders.forEach(function(inp) { inp.style.border = '2px solid #F89C1C'; });
+      var st = document.getElementById('status_' + safe_id);
+      if (st) {
+        st.style.color = '#B26A00';
+        st.innerText = offenders.length + ' value' +
+          (offenders.length === 1 ? ' differs' : 's differ') +
+          ' substantially from the country average for the same year (highlighted in orange). Please double-check them.';
+      }
+      return confirm('Some breakdown values look very different from the country average for the same year - are you sure they are correct? Press OK to submit anyway, or Cancel to go back and review the highlighted fields.');
+    }
+  ")),
   # Continued in a new <script> tag, for the same 10000-character reason
   # noted below.
   tags$script(HTML("
@@ -220,7 +261,7 @@ shared_head <- tagList(
         // Send an explicit empty string (not null) for a blank cell so the
         // server can tell explicitly-cleared apart from never-touched;
         // otherwise a cleared field falls back to the published value.
-        values[row][yr] = inp.value === '' ? '' : parseFloat(inp.value);
+        values[row][yr] = inp.value === '' ? '' : parseFloat(String(inp.value).replace(',', '.'));
       });
       var flags = {};
       container.querySelectorAll('.flag-select').forEach(function(sel) {
@@ -707,6 +748,21 @@ resource_card <- function(href, title, desc, star = FALSE) {
   )
 }
 
+# Deadline reminder banner shown at the top of both submission tabs.
+deadline_banner <- tags$div(
+  style = paste0(
+    "background:#FEF5E7;border:1px solid #F89C1C;border-left:5px solid #F89C1C;",
+    "border-radius:8px;padding:12px 18px;margin:0 0 18px;",
+    "font-size:13px;color:#1F2B3A;"
+  ),
+  tags$b("\u23F0 Reminder:"),
+  " please complete and submit your data by ",
+  tags$b("Friday 16 October 2026."), 
+  " Once your submission is final, please notify ",
+  tags$a(href = "mailto:kate.chalmers@oecd.org", "kate.chalmers@oecd.org"),
+  " so that your submission can be frozen - this protects your finalized data from any further changes."
+)
+
 # ── UI ────────────────────────────────────────────────────────────────────────
 ui <- tagList(
   shared_head,
@@ -829,6 +885,7 @@ ui <- tagList(
         class = "navbar-right-utils",
 #        actionLink("change_pw_modal_btn", label = NULL, icon = icon("gear"),
 #                   title = "Change password"),
+        uiOutput("save_status_ui", inline = TRUE),
         actionLink("logout_btn", label = NULL, icon = icon("right-from-bracket"),
                    title = "Log out")
       ),
@@ -841,6 +898,8 @@ ui <- tagList(
         tabPanel("Well-being Data Submissions",
           fluidPage(
             tags$div(class = "wb-page",
+
+              deadline_banner,
 
               # ── Header: who's logged in + purpose, folded into one card ──
               tags$div(class = "landing-hero",
@@ -859,7 +918,7 @@ ui <- tagList(
                   Time Use information, and that are not managed through other OECD or external data collection activities.</b> 
                   All official surveys are welcome as sources, including but not limited to household, health, general social, time-use, and ad hoc surveys."
                 )),
-                tags$p(class = "wb-resource-heading", "Reference material and databases"),
+                tags$p(class = "wb-resource-heading", "Reference material"),
                 tags$div(class = "wb-resource-grid",
                   resource_card("https://www.oecd.org/content/dam/oecd/en/topics/policy-sub-issues/measuring-well-being-and-progress/oecd-well-being-database-definitions.pdf",
                                 "OECD Well-being Metadata",
@@ -867,7 +926,10 @@ ui <- tagList(
                                 star = TRUE),
                   resource_card("https://www.oecd.org/wise/measuring-well-being-and-progress.htm",
                                 "The OECD's Well-being Framework",
-                                "Background on how the OECD defines and measures well-being."),
+                                "Background on how the OECD defines and measures well-being.")
+                ),
+                tags$p(class = "wb-resource-heading", "Where the data is featured"),
+                tags$div(class = "wb-resource-grid",
                   resource_card("http://data-explorer.oecd.org/s/fu",
                                 "Well-being Database",
                                 "Browse and download every published well-being indicator in the OECD Data Explorer."),
@@ -883,37 +945,37 @@ ui <- tagList(
                   resource_card("https://github.com/wise-oecd/data_monitor/tree/main/country%20profiles",
                                 "Well-being country profiles",
                                 "Annually updated profiles summarising well-being outcomes by country.")
-                )
-              ),
 
+              )
+              ),
               # ── Step 1: quick guide ───────────────────────────────────
               tags$div(class = "wb-card",
                 tags$p(class = "wb-card-title",
                        tags$span(class = "wb-step-num", "1"), "How it works"),
                 tags$ul(class = "wb-guide-list",
-                  tags$li("Each indicator below is shown as a row in the heatmap. Click any indicator row to expand its panel, enter values, and press",
-                          tags$b("\u2713 Submit"), "to save. See the legend below for what each cell colour means."),
-                  tags$li("Data and responses are pre-filled with previous submissions but can be overwritten."),
-                  tags$li("Enter figures themselves in the portal. A link to a national database or publication is welcome as a source in the",
-                          tags$b("Other useful information"), "box, but we can only take up values that are actually submitted here. A link on its own cannot be processed. If you have many values, the Excel template below is the quickest way to enter them."),
-                  tags$li("Use", tags$b("Save and continue"), "to store progress without marking an indicator complete; drafts are restored on your next login.",
-                          tags$b("Save and continue never changes the heatmap;"), "only",
-                          tags$b("\u2713 Submit"), "does."),
+                  tags$li("Each indicator is a row in the heatmap. Click a row to expand its panel and enter values. Data are entered manually, or in bulk with the optional Excel template below (quickest if you have many values). See the legend for what each cell colour means."),
+                  tags$li(tags$b("Save and continue"), "stores a draft without marking the indicator complete; drafts are restored on your next login.",
+                          tags$b("\u2713 Submit"), "saves the values and updates the heatmap. Only Submit changes the heatmap."),
+                  tags$li("Fields are pre-filled with previous submissions. You can overwrite or re-submit as often as needed before the deadline."),
                   tags$li("Indicators marked", tags$span(style = "font-size:9px;background:#F89C1C;color:white;border-radius:3px;padding:1px 4px;", "\u26A0 Awaiting data input"),
                           "still need your input; those marked",
                           tags$span(style = "font-size:9px;background:#009EDB;color:white;border-radius:3px;padding:1px 4px;", "\u231B Awaiting Time Use submission"),
                           "turn complete once the", tags$b("Time Use"), "tab is submitted."),
+                  tags$li("Please enter the data values themselves in the portal. Links to a national database or publication are welcome as a source in the",
+                          tags$b("Other useful information"), "box, but a link on its own cannot be processed."),
+                  tags$li("The portal cannot accept attachments. Email supporting documents (methodological notes, questionnaires, publications) to",
+                          tags$a(href = "mailto:kate.chalmers@oecd.org", "kate.chalmers@oecd.org"),
+                          "and mention them in the relevant comments box so we can match them to your submission."),
+                  tags$li("The portal collects annual figures only. If", tags$b("quarterly or monthly data"),
+                          "exists for an indicator, please flag this in the", tags$b("Other useful information"),
+                          "box and attach the data to your final submission email."),
                   tags$li("When flagging data, choose the", tags$b("single most important flag"),
-                          "only; add any additional flag as text in the", tags$b("Other useful information"), "box. See the",
+                          "and note any others in the", tags$b("Other useful information"), "box. See the",
                           tags$a(href = "https://sdmx.org/wp-content/uploads/CL_OBS_STATUS_v2_3-for-publication.docx",
                                  target = "_blank", "SDMX observation status guidelines"), "for reference."),
-                  tags$li("Provide metadata such as survey names or question wording in English where possible, or the official name in the original language if no translation exists."),
-                  tags$li("Values can be revised any time before the deadline, including after pressing Submit; just press",
-                          tags$b("\u2713 Submit"), "again to save the revision."),
-                  tags$li("Data can be entered manually, or in bulk using the optional Excel template below.")
+                  tags$li("Provide metadata (survey names, question wording) in English where possible, or the official name in the original language if no translation exists.")
                 )
               ),
-
               # ── Step 2: bulk upload / download ────────────────────────
               tags$div(class = "wb-card", style = "text-align:center;",
                 # Clickable header (always visible)
@@ -1040,6 +1102,9 @@ ui <- tagList(
                   tags$li("The survey name and latest survey year are", tags$b("required"),
                           "before the tables can be submitted."),
                   tags$li("Provide metadata such as survey names or question wording in English where possible, or the official name in the original language if no translation exists."),
+                  tags$li("The portal cannot accept file attachments. Any supporting documents (e.g. survey questionnaire, activity coding list) can be emailed to",
+                          tags$a(href = "mailto:kate.chalmers@oecd.org", "kate.chalmers@oecd.org"),
+                          "- please mention them in the notes box below so we can match them to your submission."),
                   tags$li("Values can be revised any time before the submission deadline, including after submitting; just remember to press",
                           tags$b("\u2713 Submit time use tables"), "again to save the revision."),
                   tags$li("Data can be entered manually or uploaded using the Paste from spreadsheet feature.")
@@ -1087,7 +1152,9 @@ ui <- tagList(
                        "Optional. Anything that helps us interpret your figures, for example ",
                        "changes in methodology since the last survey, population coverage, sample ",
                        "size, how your national activity categories map onto the OECD ones, or why ",
-                       "particular rows are left blank."),
+                       "particular rows are left blank. Supporting documents can be emailed to ",
+                       tags$a(href = "mailto:kate.chalmers@oecd.org", "kate.chalmers@oecd.org"),
+                       " - please note here if you are sending any."),
                 textAreaInput("tu_notes", label = NULL, value = "", width = "100%",
                               rows = 4,
                               placeholder = "Notes on methodology, coverage, definitions\u2026"),
@@ -1643,6 +1710,15 @@ server <- function(input, output, session) {
           updateTextAreaInput(session, "tu1_explanation", value = loaded$tu1_explanation)
     }
 
+    # Freeze state: the shared "frozen" pin (written by the Admin panel) is
+    # authoritative when it exists; older sessions stored the flag inside the
+    # session pin itself and were restored above.
+    fl <- frozen_map_read()
+    if (!is.null(fl)) {
+      session_data$frozen    <- !is.null(fl[[iso]])
+      session_data$frozen_at <- fl[[iso]]
+    }
+
     # The block above just repopulated entries/notes/.../tu_meta from disk,
     # which will fire the auto-save observer once; don't let that look like
     # a fresh edit.
@@ -1657,6 +1733,8 @@ server <- function(input, output, session) {
 
   # ── Logout ────────────────────────────────────────────────────────────────────
   observeEvent(input$logout_btn, {
+    # Push any unsaved changes before the country state is wiped.
+    flush_save_sync()
     credentials$authenticated <- FALSE
     credentials$country       <- NULL
     credentials$country_name  <- NULL
@@ -1849,7 +1927,89 @@ server <- function(input, output, session) {
     bump_ui()
   }
 
-  # Auto-save this country's session pin whenever any data changes
+  # ── Save manager: debounced, coalesced, async ───────────────────────────────
+  # A Drive write takes several seconds, so persisting on *every* change made
+  # buttons look broken. Instead, edits only mark the session dirty; the
+  # actual write happens (a) at most once per debounce window, and (b) on a
+  # mirai daemon when available, so the UI never blocks on the round-trip.
+  # If a write is already in flight when new changes arrive, exactly one
+  # follow-up write with the latest snapshot runs when it returns (never a
+  # queue of stale payloads). Last-write-wins semantics are unchanged.
+  save_epoch  <- reactiveVal(0)        # bumped on every tracked change
+  save_status <- reactiveVal("idle")   # idle | pending | saving | saved | error
+  .saved_epoch     <- 0                # epoch covered by the last started write
+  .write_in_flight <- FALSE
+  .write_pending   <- FALSE
+
+  build_save_payload <- function() {
+    c(reactiveValuesToList(session_data),
+      list(tu_survey_name  = isolate(input$tu_survey_name),
+           tu_survey_year  = isolate(input$tu_survey_year),
+           tu1_explanation = isolate(input$tu1_explanation)))
+  }
+
+  notify_save_failed <- function() {
+    save_status("error")
+    showNotification(
+      "Your latest changes could not be saved to storage. Please try again shortly.",
+      type = "error", duration = 10, session = session
+    )
+  }
+
+  do_save <- function() {
+    iso <- isolate(credentials$country)
+    if (is.null(iso)) return(invisible(NULL))
+    payload <- isolate(build_save_payload())
+    .saved_epoch <<- isolate(save_epoch())
+    save_status("saving")
+    if (!async_board_enabled) {
+      if (session_write(payload, iso)) save_status("saved") else notify_save_failed()
+      return(invisible(NULL))
+    }
+    .write_in_flight <<- TRUE
+    promises::then(
+      session_write_async(payload, iso),
+      onFulfilled = function(ok) {
+        .write_in_flight <<- FALSE
+        if (.write_pending) {
+          .write_pending <<- FALSE
+          do_save()
+        } else if (isTRUE(ok)) {
+          save_status("saved")
+        } else {
+          # Daemon-side failure: one synchronous retry so a broken daemon
+          # never silently drops data.
+          if (session_write(payload, iso)) save_status("saved") else notify_save_failed()
+        }
+      },
+      onRejected = function(e) {
+        .write_in_flight <<- FALSE
+        if (session_write(payload, iso)) save_status("saved") else notify_save_failed()
+      }
+    )
+    invisible(NULL)
+  }
+
+  # Write the latest snapshot now (async); coalesce if one is already running.
+  request_save <- function() {
+    if (.write_in_flight) .write_pending <<- TRUE else do_save()
+  }
+
+  # Synchronous flush of any unsaved changes. Used at logout and session end,
+  # where blocking is harmless and an async write might not get to finish.
+  flush_save_sync <- function() {
+    iso <- isolate(credentials$country)
+    if (is.null(iso)) return(invisible(NULL))
+    if (isolate(save_epoch()) > .saved_epoch || .write_pending) {
+      .write_pending <<- FALSE
+      .saved_epoch   <<- isolate(save_epoch())
+      session_write(isolate(build_save_payload()), iso)
+    }
+    invisible(NULL)
+  }
+
+  # Mark the session dirty whenever any tracked field changes; the debounced
+  # flush below performs the actual write once the user pauses.
   observe({
     req(credentials$authenticated, credentials$country)
     # Touch all fields to create reactive dependencies
@@ -1859,50 +2019,79 @@ server <- function(input, output, session) {
          session_data$time_use_1, session_data$time_use_2,
          session_data$tu_draft_1, session_data$tu_draft_2,
          session_data$tu_no_update, session_data$tu_meta)
-    # Record when this country's data was last touched, for the admin panel.
     # Skipped once right after login, when this observer fires purely because
-    # the country's saved data was just restored into these fields.
+    # the country's saved data was just restored into these fields - nothing
+    # new to write, and it should not stamp last_edited.
     if (isolate(suppress_edit_stamp())) {
       suppress_edit_stamp(FALSE)
-    } else {
-      session_data$last_edited <- Sys.time()
+      return()
     }
-    ok <- session_write(
-      c(reactiveValuesToList(session_data),
-        list(tu_survey_name  = isolate(input$tu_survey_name),
-             tu_survey_year  = isolate(input$tu_survey_year),
-             tu1_explanation = isolate(input$tu1_explanation))),
-      credentials$country
-    )
-    if (!ok) {
-      showNotification(
-        "Your latest changes could not be saved to storage. Please try again shortly.",
-        type = "error", duration = 10
-      )
-    }
+    session_data$last_edited <- Sys.time()
+    save_epoch(isolate(save_epoch()) + 1)
+    save_status("pending")
+  })
+
+  save_flush_trigger <- debounce(reactive(save_epoch()), 5000)
+  observeEvent(save_flush_trigger(), {
+    req(credentials$authenticated, credentials$country)
+    if (isolate(save_epoch()) > .saved_epoch) request_save()
+  }, ignoreInit = TRUE)
+
+  # A closed tab never gets another debounce tick: flush any pending changes
+  # before the session is torn down.
+  session$onSessionEnded(function() {
+    flush_save_sync()
+  })
+
+  # Small persistent indicator so a background save in progress is visible,
+  # rather than the app just looking unresponsive.
+  output$save_status_ui <- renderUI({
+    req(credentials$authenticated)
+    st <- save_status()
+    if (st == "idle") return(NULL)
+    txt <- switch(st,
+      pending = "Unsaved changes\u2026",
+      saving  = "Saving\u2026",
+      saved   = "\u2713 All changes saved",
+      error   = "\u26A0 Save failed - retrying on your next change")
+    col <- switch(st, saved = "#1F7A4D", error = "#E63312", "#55606B")
+    tags$span(style = paste0("font-size:11px;font-weight:600;color:", col,
+                             ";margin-right:12px;"),
+              txt)
   })
 
   # ── Helper: null coalescing ──────────────────────────────────────────────────
   `%||%` <- function(x, y) if (is.null(x)) y else x
 
   # ── Freeze / block collection ───────────────────────────────────────────────
-  # An admin freezes a country from the Admin panel, which writes directly to
-  # that country's session pin (admin and country sessions are separate R
-  # processes with their own session_data, so there is no shared reactive
-  # value to flip). While a country is logged in, this poll re-reads its own
-  # pin periodically so a freeze/unfreeze applied mid-session is picked
-  # up without requiring the user to log out and back in. The interval is
-  # 30s (not 4s as with the old local files) because each poll is now a
-  # round-trip to the pins board.
+  # An admin freezes a country from the Admin panel, which writes the tiny
+  # shared "frozen" pin (admin and country sessions are separate R processes
+  # with their own session_data, so there is no shared reactive value to
+  # flip). While a country is logged in, this poll re-reads that pin
+  # periodically so a freeze/unfreeze applied mid-session is picked up
+  # without requiring the user to log out and back in. The pin is a few
+  # hundred bytes (vs. the full session it used to re-download), and the read
+  # happens on a mirai daemon when available so the poll never blocks anyone.
+  apply_frozen_map <- function(fl) {
+    iso <- isolate(credentials$country)
+    # NULL pin = not migrated yet; keep whatever the login restored (legacy)
+    if (is.null(fl) || is.null(iso)) return(invisible(NULL))
+    new_frozen <- !is.null(fl[[iso]])
+    if (!identical(new_frozen, isolate(session_data$frozen))) {
+      session_data$frozen    <- new_frozen
+      session_data$frozen_at <- fl[[iso]]
+    }
+    invisible(NULL)
+  }
   observe({
     req(credentials$authenticated, credentials$country)
     invalidateLater(30000)
-    s <- session_read(credentials$country)
-    if (is.null(s)) return()
-    new_frozen <- isTRUE(s$frozen)
-    if (!identical(new_frozen, isolate(session_data$frozen))) {
-      session_data$frozen    <- new_frozen
-      session_data$frozen_at <- s$frozen_at
+    if (async_board_enabled) {
+      promises::then(session_read_async("frozen"),
+                     onFulfilled = apply_frozen_map,
+                     onRejected  = function(e) NULL)
+    } else {
+      apply_frozen_map(frozen_map_read())
     }
   })
 
@@ -2289,7 +2478,8 @@ server <- function(input, output, session) {
           for (yr in year_cols) {
             val <- df[[yr]][i]
             if (!is.na(val) && nzchar(val)) {
-              num_val <- suppressWarnings(as.numeric(val))
+              # Accept commas as decimal delimiters in uploaded workbooks
+              num_val <- suppressWarnings(as.numeric(gsub(",", ".", val, fixed = TRUE)))
               if (!is.na(num_val)) {
                 entry[[bk]][[yr]] <- num_val
                 n_values <- n_values + 1
@@ -2404,7 +2594,7 @@ server <- function(input, output, session) {
                 paste0("<td style='padding:2px;'>",
                        "<input type='text' inputmode='decimal' class='tu-num year-input' ",
                        "data-row='", r, "' data-col='", c, "' value='", saved_val, "' ",
-                       "oninput=\"this.value=this.value.replace(/[^0-9.\\-]/g,'')\" ",
+                       "oninput=\"this.value=this.value.replace(/,/g,'.').replace(/[^0-9.\\-]/g,'')\" ",
                        "style='width:100%;min-width:60px;font-size:11px;border:1px solid #ccc;",
                        "border-radius:3px;padding:2px 4px;text-align:center;'/>",
                        "</td>")
@@ -3072,7 +3262,7 @@ server <- function(input, output, session) {
             "<input type='text' inputmode='decimal' class='year-input' ",
             "data-row='", r$key, "' data-year='", yr, "' ",
             value_attr, " ", placeholder_attr, " ", default_attr,
-            " oninput=\"this.value=this.value.replace(/[^0-9.\\-]/g,'')\"",
+            " oninput=\"this.value=this.value.replace(/,/g,'.').replace(/[^0-9.\\-]/g,'')\"",
             " style='width:100%;padding:2px 1px;border:1px solid #dde1e6;border-radius:4px 4px 0 0;",
             "font-size:10px;text-align:center;border-bottom:none;margin:0;box-sizing:border-box;'/>",
             "<select class='flag-select' data-row='", r$key, "' data-year='", yr, "' ",
@@ -3107,12 +3297,18 @@ server <- function(input, output, session) {
         "flex-wrap:wrap;gap:10px;margin-top:6px;margin-left:", label_w, ";'>",
         "<div style='font-size:9px;color:#999;padding:4px 8px;",
         "background:#f8f9fa;border-radius:4px;display:inline-block;'>",
-        "<strong style='color:#666;'>Flags:</strong> ",
-        "B = Break in series &nbsp;&middot;&nbsp; ",
+        "<strong style='color:#666;'>Flags:</strong>",
+        " B = Break in series &nbsp;&middot;&nbsp; ",
         "E = Estimate &nbsp;&middot;&nbsp; ",
         "P = Provisional &nbsp;&middot;&nbsp; ",
         "D = Definition differs &nbsp;&middot;&nbsp; ",
         "U = Low reliability",
+        # Info button: the icon itself opens the SDMX guidelines; the hover
+        # tooltip explains where the link goes.
+        "<a class='info-tooltip' target='_blank' style='text-decoration:none;' ",
+        "href='https://sdmx.org/wp-content/uploads/CL_OBS_STATUS_v2_3-for-publication.docx'>&#8505;&#65038;",
+        "<span class='tooltip-text'>Flag codes follow the SDMX observation status standard. ",
+        "Click to open the full SDMX guidelines (Word document).</span></a>",
         "</div>",
         "__CLEAR_ALL_SLOT__",
         "</div>"
@@ -3539,7 +3735,8 @@ server <- function(input, output, session) {
                 "<hr style='margin:4px 0;border:none;border-top:1px solid #ddd;'/>",
                 "<div style='width:100%;'>",
                 "<strong style='font-size:13px;'>Any comments or questions?</strong>",
-                "<p style='font-size:11px;color:#888;margin:4px 0 6px;'>Add any relevant context, caveats, source notes, or technical observations about your country's data not included in the above defintion. ",
+                "<p style='font-size:11px;color:#888;margin:4px 0 6px;'>Add any relevant context, caveats, source notes, or technical observations about your country's data not included in the above definition. ",
+                "Supporting documents can be emailed to <a href='mailto:kate.chalmers@oecd.org'>kate.chalmers@oecd.org</a> - please note here if you are sending any.</p>",
                 "<div id='revnote_", sid, "' style='display:none;font-size:11px;color:#8a6d1a;",
                 "background:#FFF8E1;border:1px solid #F5C518;border-radius:6px;",
                 "padding:8px 10px;margin:0 0 6px;line-height:1.5;'></div>",
@@ -3948,14 +4145,11 @@ server <- function(input, output, session) {
     if (country_is_frozen()) return()
     # Mark as finalized with timestamp
     session_data$finalized <- Sys.time()
-    # Save session immediately
-    session_write(
-      c(reactiveValuesToList(session_data),
-        list(tu_survey_name  = isolate(input$tu_survey_name),
-             tu_survey_year  = isolate(input$tu_survey_year),
-             tu1_explanation = isolate(input$tu1_explanation))),
-      credentials$country
-    )
+    # Persist right away, without blocking the confirmation overlay. finalized
+    # is not a tracked field, so bump the epoch by hand; a write that is still
+    # pending when the user leaves is flushed at logout / session end.
+    save_epoch(isolate(save_epoch()) + 1)
+    request_save()
     # Show confirmation overlay
     runjs("document.getElementById('final_submit_confirm').style.display='flex';")
     runjs("document.getElementById('final_submit_bar').style.display='none';")
@@ -4032,13 +4226,21 @@ server <- function(input, output, session) {
       return(tags$p(style = "font-size:12px;color:#888;margin:4px 0 16px;",
                      "Select a single country above to view its last activity or freeze its submission."))
     }
-    s <- session_read(iso)
-    is_frozen   <- !is.null(s) && isTRUE(s$frozen)
+    s  <- session_read(iso)
+    fl <- frozen_map_read()
+    if (!is.null(fl)) {
+      is_frozen   <- !is.null(fl[[iso]])
+      frozen_time <- fl[[iso]]
+    } else {
+      # Legacy: sessions saved before the shared "frozen" pin existed
+      is_frozen   <- !is.null(s) && isTRUE(s$frozen)
+      frozen_time <- if (is_frozen) s$frozen_at else NULL
+    }
     cname       <- {n <- names(country_name_vector)[country_name_vector == iso]; if (length(n)) n[1] else iso}
     last_edited <- if (!is.null(s) && !is.null(s$last_edited)) {
       format(s$last_edited, "%d %b %Y at %H:%M")
     } else "No edits recorded yet"
-    frozen_at <- if (is_frozen && !is.null(s$frozen_at)) format(s$frozen_at, "%d %b %Y at %H:%M") else NULL
+    frozen_at <- if (is_frozen && !is.null(frozen_time)) format(frozen_time, "%d %b %Y at %H:%M") else NULL
 
     tags$div(
       style = paste0(
@@ -4068,16 +4270,14 @@ server <- function(input, output, session) {
     )
   })
 
-  # Applies a freeze/unfreeze directly to the country's session file. This
-  # happens from a separate R session (the admin's), so it cannot write to
-  # that country's live session_data; the country's session instead polls
-  # its own file periodically and picks the change up within a few seconds.
+  # Applies a freeze/unfreeze via the tiny shared "frozen" pin. This happens
+  # from a separate R session (the admin's), so it cannot write to that
+  # country's live session_data; the country's session instead polls the pin
+  # periodically and picks the change up within ~30 seconds. Writing the
+  # shared pin (rather than the country's session pin) also means a freeze
+  # can never overwrite edits the country is saving at the same moment.
   set_country_frozen <- function(iso, frozen) {
-    s <- session_read(iso)
-    if (is.null(s)) s <- list()
-    s$frozen    <- frozen
-    s$frozen_at <- if (frozen) Sys.time() else NULL
-    session_write(s, iso)
+    frozen_map_set(iso, frozen)
   }
 
   observeEvent(input$admin_freeze_btn, {
@@ -4266,6 +4466,9 @@ server <- function(input, output, session) {
       xlsx_measures
     )
 
+    # Read the shared freeze pin once for the whole table; NULL means it has
+    # not been created yet, in which case the legacy per-session flag applies.
+    frozen_map <- frozen_map_read()
     completion_rows <- list()
     for (i in seq_along(all_countries)) {
       iso   <- all_countries[i]
@@ -4310,7 +4513,9 @@ server <- function(input, output, session) {
       last_edited_str <- if (!is.null(s) && !is.null(s$last_edited)) {
         format(s$last_edited, "%Y-%m-%d %H:%M")
       } else ""
-      frozen_str <- if (!is.null(s) && isTRUE(s$frozen)) "Frozen" else ""
+      frozen_str <- if (!is.null(frozen_map)) {
+        if (!is.null(frozen_map[[iso]])) "Frozen" else ""
+      } else if (!is.null(s) && isTRUE(s$frozen)) "Frozen" else ""
 
       row <- c(country = cname, iso = iso, indicator_status,
                "TU Table 1" = tu1_status, "TU Table 2" = tu2_status,

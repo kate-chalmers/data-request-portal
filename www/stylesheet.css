@@ -542,7 +542,9 @@ hr { border-color: var(--oecd-border) !important; }
 }
 .wb-resource-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  /* auto-fill (not auto-fit) keeps empty tracks, so rows with few cards use
+     the same column width as full rows instead of stretching to fill. */
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
   gap: 10px;
 }
 .wb-resource-card {

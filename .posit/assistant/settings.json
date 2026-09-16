@@ -7,7 +7,8 @@
       "*.R": "allow",
       "*.css": "allow",
       "*/.renvignore": "allow",
-      "*/.rscignore": "allow"
+      "*/.rscignore": "allow",
+      "*.md": "allow"
     },
     "bash": {
       "Rscript *": "allow",
@@ -17,6 +18,10 @@
     },
     "read": {
       "*.R": "allow"
+    },
+    "external_directory": {
+      "/Users/Kate/OneDrive/WISE/Data\\ request\\ portal/data-request-portal/NO\\ DEPLOY/*": "allow",
+      "/Users/Kate/OneDrive/WISE/Data request portal/data-request-portal-static/*": "allow"
     }
   }
 }

@@ -10,8 +10,8 @@ id = "019ef9e0-05de-aa28-6909-dd61b974a797"
 dashboard_url = "https://connect.posit.cloud/kate-chalmers/content/019ef9e0-05de-aa28-6909-dd61b974a797"
 direct_url = "https://019ef9e0-05de-aa28-6909-dd61b974a797.share.connect.posit.cloud"
 logs_url = "https://connect.posit.cloud/kate-chalmers/content/019ef9e0-05de-aa28-6909-dd61b974a797/history"
-deployed_at = "2026-09-14T10:17:09.760Z"
-bundle_id = "01a09f6b-748c-f992-b493-cbba38652067"
+deployed_at = "2026-09-15T15:14:56.162Z"
+bundle_id = "01a0a5a2-6453-1a29-cbe7-d0274c6e7486"
 files = [
     ".posit/publish/data_requests-OI4F.toml",
     ".posit/publish/deployments/deployment-F8NK.toml",
@@ -27,6 +27,7 @@ files = [
     "data/previous responses.RDS",
     "data/response_input.RDS",
     "data/time use submissions.RDS",
+    "data/~$oecd_comments.xlsx",
     "drive-token/c13dc354db9600c8cd9b2bd868d1bf25_kategchalmers@gmail.com",
     "global.R",
     "www/NO DEPLOY.R",
@@ -2923,6 +2924,47 @@ author = "Yihui Xie [aut, cre] (<https://orcid.org/0000-0003-0645-5666>, https:/
 maintainer = "Yihui Xie <xie@yihui.name>"
 repository = "CRAN"
 
+[renv.packages.mirai]
+package = "mirai"
+version = "2.7.2"
+source = "Repository"
+type = "Package"
+title = "Minimalist Async Evaluation Framework for R"
+"authors@r" = "c( person(\"Charlie\", \"Gao\", , \"charlie.gao@posit.co\", role = c(\"aut\", \"cre\"), comment = c(ORCID = \"0000-0002-0750-061X\")), person(\"Joe\", \"Cheng\", , \"joe@posit.co\", role = \"ctb\"), person(\"Posit Software, PBC\", role = c(\"cph\", \"fnd\"), comment = c(ROR = \"03wc8by49\")), person(\"Hibiki AI Limited\", role = \"cph\") )"
+description = "Evaluates R expressions asynchronously and in parallel, locally or distributed across networks. An official parallel cluster type for R. Built on 'nanonext' and 'NNG', its non-polling, event-driven architecture scales from a laptop to thousands of processes across high-performance computing clusters and cloud platforms. Features FIFO scheduling with task cancellation and bounded queues, promises for reactive programming, 'OpenTelemetry' distributed tracing, and custom serialization for cross-language data types."
+license = "MIT + file LICENSE"
+url = "https://mirai.r-lib.org, https://github.com/r-lib/mirai"
+bug_reports = "https://github.com/r-lib/mirai/issues"
+depends = [
+    "R (>= 3.6)",
+]
+imports = [
+    "nanonext (>= 1.10.1)",
+]
+suggests = [
+    "cli",
+    "litedown",
+    "mori",
+    "otel",
+    "otelsdk",
+    "secretbase",
+]
+enhances = [
+    "parallel",
+    "promises",
+]
+vignette_builder = "litedown"
+"config/needs/coverage" = "rlang"
+"config/needs/website" = "tidyverse/tidytemplate"
+"config/roxygen2/markdown" = "TRUE"
+"config/roxygen2/version" = "8.0.0.9000"
+"config/usethis/last-upkeep" = "2026-07-11"
+encoding = "UTF-8"
+needs_compilation = "no"
+author = "Charlie Gao [aut, cre] (ORCID: <https://orcid.org/0000-0002-0750-061X>), Joe Cheng [ctb], Posit Software, PBC [cph, fnd] (ROR: <https://ror.org/03wc8by49>), Hibiki AI Limited [cph]"
+maintainer = "Charlie Gao <charlie.gao@posit.co>"
+repository = "CRAN"
+
 [renv.packages.modelr]
 package = "modelr"
 version = "0.1.11"
@@ -2960,6 +3002,41 @@ roxygen_note = "7.2.3"
 needs_compilation = "no"
 author = "Hadley Wickham [aut, cre], Posit Software, PBC [cph, fnd]"
 maintainer = "Hadley Wickham <hadley@posit.co>"
+repository = "CRAN"
+
+[renv.packages.nanonext]
+package = "nanonext"
+version = "1.10.2"
+source = "Repository"
+type = "Package"
+title = "Lightweight Toolkit for Messaging, Concurrency and the Web"
+"authors@r" = "c( person(\"Charlie\", \"Gao\", , \"charlie.gao@posit.co\", role = c(\"aut\", \"cre\"), comment = c(ORCID = \"0000-0002-0750-061X\")), person(\"Posit Software, PBC\", role = c(\"cph\", \"fnd\"), comment = c(ROR = \"03wc8by49\")), person(\"Hibiki AI Limited\", role = \"cph\"), person(\"Staysail Systems, Inc.\", role = \"cph\", comment = \"NNG library\"), person(\"Capitar IT Group BV\", role = \"cph\", comment = \"NNG library\"), person(\"The Mbed TLS Contributors\", role = \"cph\", comment = \"Mbed TLS library\"), person(\"Pierre\", \"L'Ecuyer\", role = \"cph\", comment = \"RngStreams library\"), person(\"sakura authors\", role = \"cph\", comment = \"Serialization hooks\"), person(\"R Consortium\", role = \"fnd\", comment = c(ROR = \"01z833950\")) )"
+description = "R binding for NNG (Nanomsg Next Gen), a successor to ZeroMQ. A toolkit for messaging, concurrency and the web. High-performance socket messaging over in-process, IPC, TCP, WebSocket and secure TLS transports implements 'Scalability Protocols', a standard for common communications patterns including publish/subscribe, request/reply and survey. A threaded concurrency framework with intuitive 'aio' objects that resolve automatically upon completion of asynchronous operations, and synchronisation primitives that allow R to wait on events signalled by concurrent threads. A unified HTTP server hosting REST endpoints, WebSocket connections and streaming on a single port, with a built-in HTTP client."
+license = "MIT + file LICENSE"
+url = "https://nanonext.r-lib.org, https://github.com/r-lib/nanonext"
+bug_reports = "https://github.com/r-lib/nanonext/issues"
+depends = [
+    "R (>= 3.6)",
+]
+suggests = [
+    "later",
+    "litedown",
+]
+enhances = [
+    "promises",
+]
+vignette_builder = "litedown"
+biarch = "true"
+"config/build/compilation-database" = "true"
+"config/needs/website" = "tidyverse/tidytemplate"
+"config/roxygen2/markdown" = "TRUE"
+"config/roxygen2/version" = "8.0.0"
+"config/usethis/last-upkeep" = "2026-07-11"
+encoding = "UTF-8"
+system_requirements = "'libnng' >= 1.12 and 'libmbedtls' >= 3.0 (optional, bundled sources compiled otherwise)"
+needs_compilation = "yes"
+author = "Charlie Gao [aut, cre] (ORCID: <https://orcid.org/0000-0002-0750-061X>), Posit Software, PBC [cph, fnd] (ROR: <https://ror.org/03wc8by49>), Hibiki AI Limited [cph], Staysail Systems, Inc. [cph] (NNG library), Capitar IT Group BV [cph] (NNG library), The Mbed TLS Contributors [cph] (Mbed TLS library), Pierre L'Ecuyer [cph] (RngStreams library), sakura authors [cph] (Serialization hooks), R Consortium [fnd] (ROR: <https://ror.org/01z833950>)"
+maintainer = "Charlie Gao <charlie.gao@posit.co>"
 repository = "CRAN"
 
 [renv.packages.nlme]
