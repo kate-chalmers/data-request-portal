@@ -360,6 +360,13 @@ shared_head <- tagList(
   ")),
   # Third <script> tag, for the same 10000-character reason as above.
   tags$script(HTML("
+    // Jump to the Well-being Data Coverage tab; used by the landing-hero link.
+    function goToCoverageTab() {
+      var el = document.querySelector('#main_navbar a[data-value=\"Well-being Data Coverage\"]');
+      if (el) el.click();
+      return false;
+    }
+
     function submitNote(safe_id, measure) {
       var el = document.getElementById('note_' + safe_id);
       Shiny.setInputValue('submitted_note',
@@ -733,7 +740,7 @@ coverage_legend <- tags$div(
 login_country_choices <- list(
   "Select your country" = "",
   "OECD countries" = as.list(.oecd_choices[order(names(.oecd_choices))]),
-  "Partner countries" = as.list(.partner_choices[order(names(.partner_choices))])
+  "Accession countries" = as.list(.partner_choices[order(names(.partner_choices))])
 )
 
 # ── Related-resource card ─────────────────────────────────────────────────────
@@ -909,11 +916,11 @@ ui <- tagList(
                 ),
                 uiOutput("country_status"),
                 tags$p(style = "margin-bottom: 15px", HTML(
-                  "This questionnaire gathers national data on well-being in OECD member countries for the <strong>OECD Well-being Database</strong> and
+                  "This questionnaire gathers national data on well-being in OECD Member and accession countries for the OECD Well-being Database and
                   associated products, including the How's Life? publication series, the Well-being Data Monitor,
                   and the annual well-being country profiles.
                   <br><br>
-                  The database includes over 80 indicators, most sourced from other OECD and external data collections. The full set may be viewed on the Well-being Data Coverage tab.
+                  The OECD Well-being Database includes over 80 indicators, most sourced from other OECD and external data collections. The full set may be viewed on the <a href='#' onclick='return goToCoverageTab();'>Well-being Data Coverage</a> tab.
                   <b>To streamline the data collection process, this questionnaire covers only a subset of these indicators unique to the OECD Well-being Database, plus relevant
                   Time Use information, and that are not managed through other OECD or external data collection activities.</b> 
                   All official surveys are welcome as sources, including but not limited to household, health, general social, time-use, and ad hoc surveys."

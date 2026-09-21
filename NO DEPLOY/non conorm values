@@ -1,0 +1,7 @@
+library(tidyverse)
+
+prev_response <- readRDS("data/previous responses.RDS") 
+prev_response <- bind_rows(prev_response, .id = "ref_area")
+
+oecd_comments <- readxl::read_excel("data/oecd_comments.xlsx")
+

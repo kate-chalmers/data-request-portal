@@ -200,12 +200,25 @@ dat <- readRDS("./data/final dataset.RDS") %>%
   select(-base_per) %>%
   rbind(readRDS("./data/5_5 Request data.RDS")) %>%
   filter(measure %in% unique(measure_list$measure)) %>%
-  mutate(time_period = as.numeric(time_period))
+  mutate(time_period = as.numeric(time_period),
+         time_period = ifelse(ref_area == "POL" & measure == "4_3" & is.na(time_period), 2023, time_period)) %>%
+  add_row(
+    ref_area = "HUN",
+    measure = "5_5",
+    unit_measure = "PT_POP_Y_GE15",
+    sex = c("_T", "F", "M", rep("_T", 6), "_T", "F", "M", rep("_T", 6)),
+    age = c(rep("_T", 3), "YOUNG", "MID", "OLD", rep("_T", 3), rep("_T", 3), "YOUNG", "MID", "OLD", rep("_T", 3)),
+    education_lev = c(rep("_T", 6), "ISCED11_1", "ISCED11_2_3", "ISCED11_5T8", 
+    rep("_T", 6), "ISCED11_1", "ISCED11_2_3", "ISCED11_5T8"),
+    time_period = c(rep(2014, 9), rep(2019, 9)),
+    obs_value = c(44.0, 39.4, 48.0, 32.6, 42.2, 57.2, 57.9, 43.3, 30.3, 36, 30.7, 40.9, 30.2, 34.8, 42.6,44.2, 33.3, 35.6),
+    obs_status = "A"
+  ) 
 
 
 # ── Non-used responses (submitted but not incorporated) ──────────────────────
 nonused_dat <- if (file.exists("data/non-used responses.RDS")) {
-  readRDS("data/non-used responses.RDS")
+  readRDS("data/non-used responses.RDS") 
 } else {
   data.frame(measure = character(), ref_area = character(),
              sex = character(), age = character(),
@@ -232,15 +245,15 @@ pct_indics         <- c("1_5", "3_5", "4_2", "5_4", "5_5", "7_4", "8_2", "9_1")
 scale_indics       <- c("2_9", "4_4", "7_3", "11_1", "14_1", "14_2")
 hours_day_indics   <- c("4_1")
 hours_week_indics  <- c("7_2")
-minutes_day_indics <- c("4_3")
+# 4_3 (gender gap in time use) has no validation range: countries enter raw
+# minutes per week (e.g. 440) per sex and the gap is calculated by the OECD.
 
 # Named list: measure → list(min, max)
 validation_ranges <- c(
   setNames(lapply(pct_indics,         function(m) list(min = 0, max = 100)),  pct_indics),
   setNames(lapply(scale_indics,       function(m) list(min = 0, max = 10)),   scale_indics),
   setNames(lapply(hours_day_indics,   function(m) list(min = 0, max = 24)),   hours_day_indics),
-  setNames(lapply(hours_week_indics,  function(m) list(min = 0, max = 168)),  hours_week_indics),
-  setNames(lapply(minutes_day_indics, function(m) list(min = -120, max = 120)), minutes_day_indics)
+  setNames(lapply(hours_week_indics,  function(m) list(min = 0, max = 168)),  hours_week_indics)
 )
 
 # Row-level overrides: a handful of breakdown rows use a different valid
@@ -431,7 +444,7 @@ oecd_avg <- if (file.exists(oecd_avg_file)) readRDS(oecd_avg_file) else NULL
 # Matching is by question text (labels may be offset across countries).
 
 .prev_resp_raw <- if (file.exists("data/previous responses.RDS")) {
-  readRDS("data/previous responses.RDS")
+  readRDS("data/previous responses.RDS") 
 } else {
   list()
 }
