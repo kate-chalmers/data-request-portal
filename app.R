@@ -3080,8 +3080,8 @@ server <- function(input, output, session) {
       al <- age_labels(m)
       if (m %in% no_country_average) {
         list(
-          list(key="male",        label="Male",                  bold=FALSE),
-          list(key="female",      label="Female",                bold=FALSE),
+          list(key="male",        label="Men",                  bold=FALSE),
+          list(key="female",      label="Women",                bold=FALSE),
           list(key="young",       label=al$young,                bold=FALSE),
           list(key="middle_aged", label=al$middle_aged,          bold=FALSE),
           list(key="old",         label=al$old,                  bold=FALSE),
@@ -3093,8 +3093,8 @@ server <- function(input, output, session) {
       } else if (m %in% all_rows) {
         list(
           list(key="country_avg", label="Country average",       bold=TRUE),
-          list(key="male",        label="Male",                  bold=FALSE),
-          list(key="female",      label="Female",                bold=FALSE),
+          list(key="male",        label="Men",                  bold=FALSE),
+          list(key="female",      label="Women",                bold=FALSE),
           list(key="young",       label=al$young,                bold=FALSE),
           list(key="middle_aged", label=al$middle_aged,          bold=FALSE),
           list(key="old",         label=al$old,                  bold=FALSE),
@@ -3110,8 +3110,8 @@ server <- function(input, output, session) {
                tooltip="To calculate vertical inequality data (bottom 20% and top 20%), sort the data you have from the lowest score given to the highest level of the indicator declared, and (after weighting) you divide the results in five equal parts. Then, calculate the average of the group with the highest 20% and lowest 20% of scores."),
           list(key="dep",         label="Deprivation",           bold=FALSE,
                tooltip="Share of people reporting a score equal to 4 or below"),
-          list(key="male",        label="Male",                  bold=FALSE),
-          list(key="female",      label="Female",                bold=FALSE),
+          list(key="male",        label="Men",                  bold=FALSE),
+          list(key="female",      label="Women",                bold=FALSE),
           list(key="young",       label=al$young,                bold=FALSE),
           list(key="middle_aged", label=al$middle_aged,          bold=FALSE),
           list(key="old",         label=al$old,                  bold=FALSE),
@@ -3123,8 +3123,8 @@ server <- function(input, output, session) {
       } else if (m %in% gender_only) {
         list(
           list(key="country_avg", label="Country average", bold=TRUE),
-          list(key="male",        label="Male",            bold=FALSE),
-          list(key="female",      label="Female",          bold=FALSE)
+          list(key="male",        label="Men",            bold=FALSE),
+          list(key="female",      label="Women",          bold=FALSE)
         )
       } else {
         list(list(key="country_avg", label="Country average", bold=TRUE))
@@ -3243,6 +3243,11 @@ server <- function(input, output, session) {
           } else ""
           default_attr <- if (!is.na(default_val)) paste0("data-default='", default_val, "'") else "data-default=''"
 
+          # Highlight cells whose value was previously submitted but not
+          # published (non-used data), matching the purple legend colour.
+          is_nonused <- identical(lookup$source, "nonused")
+          input_bg <- if (is_nonused) "background:#C4B5D4;border-color:#b3a1c7;" else ""
+
           v <- if (!is.null(saved) && !is.null(saved[[r$key]]) &&
                    !is.null(saved[[r$key]][[as.character(yr)]])) {
             saved[[r$key]][[as.character(yr)]]
@@ -3271,7 +3276,8 @@ server <- function(input, output, session) {
             value_attr, " ", placeholder_attr, " ", default_attr,
             " oninput=\"this.value=this.value.replace(/,/g,'.').replace(/[^0-9.\\-]/g,'')\"",
             " style='width:100%;padding:2px 1px;border:1px solid #dde1e6;border-radius:4px 4px 0 0;",
-            "font-size:10px;text-align:center;border-bottom:none;margin:0;box-sizing:border-box;'/>",
+            "font-size:10px;text-align:center;border-bottom:none;margin:0;box-sizing:border-box;",
+            input_bg, "'/>",
             "<select class='flag-select' data-row='", r$key, "' data-year='", yr, "' ",
             "data-default-flag='", default_flag, "' ",
             "style='width:100%;padding:0;border:1px solid #dde1e6;border-radius:0 0 4px 4px;",

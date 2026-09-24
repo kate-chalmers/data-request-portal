@@ -1,7 +1,26 @@
 library(tidyverse)
 
 prev_response <- readRDS("data/previous responses.RDS") 
-prev_response <- bind_rows(prev_response, .id = "ref_area")
+prev_response <- bind_rows(prev_response, .id = "ref_area") %>%
+  filter(question %in% "If yes, could you provide the exact question wording and response scale used?",
+        !is.na(response)) %>%
+  select(ref_area, measure, country_response = response)
 
 oecd_comments <- readxl::read_excel("data/oecd_comments.xlsx")
 
+oecd_format <- readRDS("./data/response_input.RDS") |>
+  map(\(x) bind_rows(label = x$label, response = x$response, .id = "block") |>
+        mutate(indic = x$indic, .before = 1)) |>
+  list_rbind() %>%
+  filter(label %in% c("OECD question wording", "OECD response format")) %>%
+  select(measure = indic, label, response)
+
+oecd_format <- oecd_format %>% group_by(measure) %>% mutate(response = paste0(response)) %>% slice(1) %>% ungroup
+
+oecd_comments %>% 
+  filter(!is.na(reason)) %>% 
+  filter(measure == "11_1") %>% 
+  merge(oecd_format) %>%
+  merge(prev_response, by = c("ref_area", "measure")) %>%
+  select(ref_area, response, country_response, reason) %>%
+  reactable::reactable()

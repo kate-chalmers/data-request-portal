@@ -290,6 +290,11 @@ measure_notes <- list(
     "The heatmap on this tab therefore reflects population-group data only. ",
     "Country-level voter turnout shown in the Well-being Data Coverage tab is ",
     "sourced separately and may look different."
+  ),
+  "4_3" = paste0(
+    "This indicator is calculated by subtracting women's total time from men's. ",
+    "There is no need to provide values for men or women if the value is already ",
+    "confirmed and available in the database."
   )
 )
 gender_only <- c("4_3")
@@ -526,6 +531,7 @@ latest_request_file <- "data/latest request.RDS"
 
 latest_request <- if (file.exists(latest_request_file)) {
   .lr <- readRDS(latest_request_file) %>%
+    # REMOVE EVENTUALLY
     mutate(
       ref_area = if_else(ref_area %in% names(.lr_aliases),
                          unname(.lr_aliases[ref_area]), ref_area),
@@ -583,3 +589,5 @@ last_tu_survey <- if (file.exists(last_tu_survey_file)) {
 } else {
   list()
 }
+
+
