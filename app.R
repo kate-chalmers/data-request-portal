@@ -764,7 +764,7 @@ deadline_banner <- tags$div(
   ),
   tags$b("\u23F0 Reminder:"),
   " please complete and submit your data by ",
-  tags$b("Friday 16 October 2026."), 
+  tags$b("Friday 15 January 2027."), 
   " Once your submission is final, please notify ",
   tags$a(href = "mailto:kate.chalmers@oecd.org", "kate.chalmers@oecd.org"),
   " so that your submission can be frozen - this protects your finalized data from any further changes."
@@ -961,6 +961,8 @@ ui <- tagList(
                        tags$span(class = "wb-step-num", "1"), "How it works"),
                 tags$ul(class = "wb-guide-list",
                   tags$li("Each indicator is a row in the heatmap. Click a row to expand its panel and enter values. Data are entered manually, or in bulk with the optional Excel template below (quickest if you have many values). See the legend for what each cell colour means."),
+                  tags$li("A small", tags$span(style = "display:inline-flex;align-items:center;justify-content:center;margin:0 3px;width:15px;height:15px;border-radius:50%;background:#FFF3CD;color:#8a6d1a;font-size:9px;line-height:1;vertical-align:middle;", "\U0001F4AC"),
+                          "icon next to an indicator's name means the OECD has left a comment on it \u2014 expand that row to read it."),
                   tags$li(tags$b("Save and continue"), "stores a draft without marking the indicator complete; drafts are restored on your next login.",
                           tags$b("\u2713 Submit"), "saves the values and updates the heatmap. Only Submit changes the heatmap."),
                   tags$li("Fields are pre-filled with previous submissions. You can overwrite or re-submit as often as needed before the deadline."),
@@ -3243,10 +3245,16 @@ server <- function(input, output, session) {
           } else ""
           default_attr <- if (!is.na(default_val)) paste0("data-default='", default_val, "'") else "data-default=''"
 
-          # Highlight cells whose value was previously submitted but not
-          # published (non-used data), matching the purple legend colour.
-          is_nonused <- identical(lookup$source, "nonused")
-          input_bg <- if (is_nonused) "background:#C4B5D4;border-color:#b3a1c7;" else ""
+          # Outline cells whose value was previously submitted but not
+          # published (non-used data) with the purple legend colour. 4_3's
+          # population breakdowns (male/female) are exempt, since countries
+          # don't need to fill them in once the country average is confirmed
+          # as existing data - but the country average row itself should
+          # still be flagged.
+          is_nonused <- identical(lookup$source, "nonused") &&
+            !(m == "4_3" && r$key != "country_avg")
+          input_hl  <- if (is_nonused) "border:2px solid #C4B5D4;border-bottom:none;" else ""
+          select_hl <- if (is_nonused) "border:2px solid #C4B5D4;border-top:1px solid #dde1e6;" else ""
 
           v <- if (!is.null(saved) && !is.null(saved[[r$key]]) &&
                    !is.null(saved[[r$key]][[as.character(yr)]])) {
@@ -3277,12 +3285,13 @@ server <- function(input, output, session) {
             " oninput=\"this.value=this.value.replace(/,/g,'.').replace(/[^0-9.\\-]/g,'')\"",
             " style='width:100%;padding:2px 1px;border:1px solid #dde1e6;border-radius:4px 4px 0 0;",
             "font-size:10px;text-align:center;border-bottom:none;margin:0;box-sizing:border-box;",
-            input_bg, "'/>",
+            input_hl, "'/>",
             "<select class='flag-select' data-row='", r$key, "' data-year='", yr, "' ",
             "data-default-flag='", default_flag, "' ",
             "style='width:100%;padding:0;border:1px solid #dde1e6;border-radius:0 0 4px 4px;",
             "font-size:7px;text-align:center;color:#999;background:#fafbfc;cursor:pointer;",
-            "line-height:1;height:14px;-webkit-appearance:none;appearance:none;margin:0;box-sizing:border-box;'>",
+            "line-height:1;height:14px;-webkit-appearance:none;appearance:none;margin:0;box-sizing:border-box;",
+            select_hl, "'>",
             opts_html, "</select>",
             "</div>"
           )
@@ -3649,12 +3658,33 @@ server <- function(input, output, session) {
             } else ""
             paste0(
               "<div style='background:#FFF8E1;border:1px solid #F5C518;border-radius:6px;padding:10px 14px;margin-bottom:12px;'>",
-              "<strong style='font-size:12px;color:#8a6d1a;'>OECD Comment</strong>",
+              "<strong style='font-size:12px;color:#8a6d1a;display:inline-flex;align-items:center;gap:5px;'>",
+              "<span style='display:inline-flex;align-items:center;justify-content:center;",
+              "width:15px;height:15px;border-radius:50%;background:#FFF3CD;",
+              "color:#8a6d1a;font-size:9px;line-height:1;'>&#128172;</span>",
+              "OECD Comment</strong>",
               "<p style='font-size:11px;color:#444;margin:4px 0 0;line-height:1.5;'>",
               htmltools::htmlEscape(cmt), "</p>",
               rsn_html, "</div>"
             )
           }),
+
+          # Small icon beside the indicator name when an OECD comment
+          # exists, so countries spot it without opening the panel. A
+          # tinted circle (no text/pill) keeps it compact; the tooltip
+          # carries the meaning.
+          comment_flag = if_else(
+            nzchar(comment_html),
+            paste0(
+              "<span title='Comment from the OECD' ",
+              "style='display:inline-flex;align-items:center;justify-content:center;",
+              "margin-right:5px;width:15px;height:15px;border-radius:50%;",
+              "background:#FFF3CD;color:#8a6d1a;font-size:9px;line-height:1;",
+              "vertical-align:middle;'>",
+              "&#128172;</span>"
+            ),
+            ""
+          ),
 
           panel_body = mapply(function(ni, itu, sid, mn, yi, yc, q, oqh, cqh, def, tech, unt, lbl, is_nu, nth, cth) {
             if (ni) {
@@ -3775,7 +3805,7 @@ server <- function(input, output, session) {
             "style='cursor:pointer;display:flex;flex-direction:row;align-items:center;margin-bottom:1px;width:100%;padding:2px;border-radius:3px;",
             row_border,
             "' onmouseover=\"this.style.background='#f0f0f0'\" onmouseout=\"this.style.background='", row_hover, "'\">",
-            "<div style='flex:0 0 20%;font-size:12px;padding-right:2px;text-align:right;'>", label, "</div>",
+            "<div style='flex:0 0 20%;font-size:12px;padding-right:2px;text-align:right;'>", comment_flag, label, "</div>",
             "<div style='flex:1 1 0;min-width:0;display:flex;flex-direction:row;'>", boxes, "</div>",
             "<div style='flex:0 0 200px;text-align:left;padding-left:6px;overflow:hidden;'>", badge_html, "</div>",
             "</div>",

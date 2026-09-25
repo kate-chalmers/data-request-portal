@@ -454,6 +454,22 @@ oecd_avg <- if (file.exists(oecd_avg_file)) readRDS(oecd_avg_file) else NULL
   list()
 }
 
+# The file is now one long tibble (question, response, measure, ref_area,
+# year); it used to be a named list of per-country tibbles. Convert to the
+# per-country list expected below, keeping only each country's most recent
+# request round per measure.
+if (is.data.frame(.prev_resp_raw)) {
+  if ("year" %in% names(.prev_resp_raw)) {
+    .prev_resp_raw <- .prev_resp_raw %>%
+      mutate(.yr = suppressWarnings(as.numeric(year))) %>%
+      group_by(ref_area, measure) %>%
+      slice_max(.yr, with_ties = TRUE, na_rm = FALSE) %>%
+      ungroup() %>%
+      select(-.yr)
+  }
+  .prev_resp_raw <- split(.prev_resp_raw, .prev_resp_raw$ref_area)
+}
+
 country_prefill <- lapply(.prev_resp_raw, function(country_df) {
   measures <- unique(country_df$measure)
   setNames(lapply(measures, function(m) {
