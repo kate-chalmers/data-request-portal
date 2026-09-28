@@ -226,6 +226,9 @@ nonused_dat <- if (file.exists("data/non-used responses.RDS")) {
              obs_value = numeric())
 }
 
+nonused_dat <- nonused_dat %>%
+  filter(!(ref_area == "MEX" & time_period == 2021 & measure == "1_5"))
+
 current_year <- format(Sys.Date(), "%Y")
 
 xlsx_measures <- c("1_5", "2_9", "3_5","4_1", "4_2","4_3","4_4",
