@@ -457,19 +457,11 @@ oecd_avg <- if (file.exists(oecd_avg_file)) readRDS(oecd_avg_file) else NULL
   list()
 }
 
-# The file is now one long tibble (question, response, measure, ref_area,
-# year); it used to be a named list of per-country tibbles. Convert to the
-# per-country list expected below, keeping only each country's most recent
-# request round per measure.
+# The file is one long tibble (question, response, measure, ref_area, year);
+# it used to be a named list of per-country tibbles. Split into that
+# per-country shape, keeping every round/year - the per-question fallback
+# below picks which year's answer to use.
 if (is.data.frame(.prev_resp_raw)) {
-  if ("year" %in% names(.prev_resp_raw)) {
-    .prev_resp_raw <- .prev_resp_raw %>%
-      mutate(.yr = suppressWarnings(as.numeric(year))) %>%
-      group_by(ref_area, measure) %>%
-      slice_max(.yr, with_ties = TRUE, na_rm = FALSE) %>%
-      ungroup() %>%
-      select(-.yr)
-  }
   .prev_resp_raw <- split(.prev_resp_raw, .prev_resp_raw$ref_area)
 }
 
@@ -477,6 +469,11 @@ country_prefill <- lapply(.prev_resp_raw, function(country_df) {
   measures <- unique(country_df$measure)
   setNames(lapply(measures, function(m) {
     prev   <- country_df[country_df$measure == m, , drop = FALSE]
+    # Most recent round first, so the loop below naturally prefers it;
+    # rows with an unparseable/missing year sort last.
+    if ("year" %in% names(prev)) {
+      prev <- prev[order(-suppressWarnings(as.numeric(prev$year))), , drop = FALSE]
+    }
     # Find the matching response format to get question labels + indices
     fmt_idx <- which(sapply(xlsx_response_format, function(x) x$indic) == m)
     if (length(fmt_idx) == 0) return(NULL)
@@ -484,12 +481,12 @@ country_prefill <- lapply(.prev_resp_raw, function(country_df) {
 
     out <- list()
     for (i in seq_along(fmt_labels)) {
-      # Match by exact question text
-      hit <- which(prev$question == fmt_labels[i])
-      if (length(hit) > 0) {
-        val <- prev$response[hit[1]]
-        if (!is.na(val) && nzchar(val)) out[[as.character(i)]] <- val
-      }
+      # Match by exact question text, then take the most recent round that
+      # actually has a non-blank answer - falling back to earlier years
+      # (e.g. 2023, then 2022, ...) when the latest round left it blank.
+      hit <- which(prev$question == fmt_labels[i] &
+                   !is.na(prev$response) & nzchar(prev$response))
+      if (length(hit) > 0) out[[as.character(i)]] <- prev$response[hit[1]]
     }
     if (length(out) > 0) out else NULL
   }), measures)
